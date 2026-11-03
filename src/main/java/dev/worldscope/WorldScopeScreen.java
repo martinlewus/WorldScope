@@ -43,8 +43,12 @@ public final class WorldScopeScreen extends Screen {
     private int infoLeft;
     private int infoRight;
     private boolean compactUi;
-    private int marqueeOffset;
-    private int marqueeTickCounter;
+    private static final String MARQUEE_GAP = "      ";
+    private static final int MARQUEE_START_DELAY_TICKS = 40;
+    private static final float MARQUEE_PIXELS_PER_TICK = 0.45f;
+    private float marqueeOffsetPx;
+    private int marqueeDelayTicks = MARQUEE_START_DELAY_TICKS;
+    private String marqueeResetKey = "";
 
     public WorldScopeScreen() {
         super(Component.literal("WorldScope"));
@@ -416,42 +420,63 @@ public final class WorldScopeScreen extends Screen {
         return scanStatus == null ? "" : scanStatus;
     }
 
-    private String marqueeText(String value, int maxWidth) {
-        if (value == null || value.isEmpty() || maxWidth <= 0) return "";
-        if (font.width(value) <= maxWidth) {
-            marqueeOffset = 0;
-            return value;
-        }
-
-        String cycle = value + "     ";
-        int start = marqueeOffset % cycle.length();
-        StringBuilder visible = new StringBuilder();
-        int cursor = start;
-        while (cursor < start + cycle.length()) {
-            char next = cycle.charAt(cursor % cycle.length());
-            String candidate = visible.toString() + next;
-            if (!visible.isEmpty() && font.width(candidate) > maxWidth) break;
-            if (font.width(candidate) > maxWidth) break;
-            visible.append(next);
-            cursor++;
-        }
-        return visible.toString();
-    }
-
     @Override
     public void tick() {
         super.tick();
         String line = currentStatusLine();
-        if (font.width(line) <= Math.max(30, panelWidth - 38)) {
-            marqueeOffset = 0;
-            marqueeTickCounter = 0;
+
+        // Progress counters change while a scan runs. Ignore the trailing
+        // completed/total values when deciding whether a new message deserves
+        // its own two-second pause.
+        String resetKey = line.replaceFirst("\\s+\\d+/\\d+$", "");
+        if (!resetKey.equals(marqueeResetKey)) {
+            marqueeResetKey = resetKey;
+            marqueeOffsetPx = 0.0f;
+            marqueeDelayTicks = MARQUEE_START_DELAY_TICKS;
+        }
+
+        int availableWidth = Math.max(30, panelWidth - 38);
+        if (font.width(line) <= availableWidth) {
+            marqueeOffsetPx = 0.0f;
+            marqueeDelayTicks = MARQUEE_START_DELAY_TICKS;
             return;
         }
-        if (++marqueeTickCounter >= 2) {
-            marqueeTickCounter = 0;
-            marqueeOffset++;
-            if (marqueeOffset >= line.length() + 5) marqueeOffset = 0;
+
+        if (marqueeDelayTicks > 0) {
+            marqueeDelayTicks--;
+            return;
         }
+
+        float cycleWidth = font.width(line + MARQUEE_GAP);
+        if (cycleWidth > 0.0f) {
+            marqueeOffsetPx += MARQUEE_PIXELS_PER_TICK;
+            if (marqueeOffsetPx >= cycleWidth) {
+                marqueeOffsetPx -= cycleWidth;
+            }
+        }
+    }
+
+    private void drawMarquee(GuiGraphicsExtractor graphics, String line,
+                             int left, int top, int right, int bottom) {
+        if (line == null || line.isEmpty()) return;
+
+        int textX = left + 7;
+        int textY = top + 7;
+        int availableWidth = Math.max(1, right - left - 14);
+        float offset = font.width(line) > availableWidth ? marqueeOffsetPx : 0.0f;
+        int cycleWidth = font.width(line + MARQUEE_GAP);
+
+        // Pixel-based subpixel translation plus a scissor keeps the full message
+        // moving smoothly without ever drawing outside the status bar.
+        graphics.enableScissor(left + 3, top + 1, right - 3, bottom - 1);
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(-offset, 0.0f);
+        graphics.text(font, Component.literal(line), textX, textY, 0xFFFFFFFF);
+        if (font.width(line) > availableWidth) {
+            graphics.text(font, Component.literal(line), textX + cycleWidth, textY, 0xFFFFFFFF);
+        }
+        graphics.pose().popMatrix();
+        graphics.disableScissor();
     }
 
     @Override
@@ -586,9 +611,12 @@ public final class WorldScopeScreen extends Screen {
         }
 
         String scanStatus = currentStatusLine();
-        graphics.fill(left + 12, top + h - 27, left + w - 12, top + h - 8, 0xFF333333);
-        graphics.text(font, Component.literal(marqueeText(scanStatus, w - 38)),
-                left + 19, top + h - 21, 0xFFFFFFFF);
+        int statusLeft = left + 12;
+        int statusTop = top + h - 27;
+        int statusRight = left + w - 12;
+        int statusBottom = top + h - 8;
+        graphics.fill(statusLeft, statusTop, statusRight, statusBottom, 0xFF333333);
+        drawMarquee(graphics, scanStatus, statusLeft, statusTop, statusRight, statusBottom);
 
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
     }
