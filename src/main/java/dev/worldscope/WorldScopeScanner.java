@@ -491,11 +491,18 @@ public final class WorldScopeScanner {
                     + stats.cacheAbsentVerified + " of those anyway ("
                     + stats.cacheAbsentFound + " contained the selected structure, "
                     + stats.cacheAbsentEmpty + " did not). "
+                    + stats.referenceChunksWithStarts + " candidate chunks exposed structure references; "
+                    + stats.referencedStartsFound + " starts were recovered through references; "
+                    + stats.duplicateStartsIgnored + " duplicate references ignored. "
                     + stats.presenceErrors + " check errors; "
                     + stats.loadedWithoutStart + " loaded candidates had no matching start.";
             if (stats.cacheAbsentLocations.size() > 0) {
                 diagnostic += " Cache-negative chunks checked: "
                         + String.join(", ", stats.cacheAbsentLocations) + ".";
+            }
+            if (stats.recoveredStartLocations.size() > 0) {
+                diagnostic += " Recovered start locations: "
+                        + String.join(", ", stats.recoveredStartLocations) + ".";
             }
             if (stats.cacheAbsentFallbackSkipped > 0) {
                 diagnostic += " " + stats.cacheAbsentFallbackSkipped
@@ -581,8 +588,12 @@ public final class WorldScopeScanner {
             // decision. Load through STRUCTURE_STARTS and inspect the actual
             // chunk start map anyway. This catches cache misses, stale cache
             // entries, and reference/placement mismatches without guessing.
+            // Structure references are written after starts are created.
+            // Load through STRUCTURE_REFERENCES so a large structure whose
+            // start lies in a neighboring chunk can still be recovered from
+            // the candidate chunk's reference list.
             level.getChunkSource()
-                    .getChunkFuture(candidate.x(), candidate.z(), ChunkStatus.STRUCTURE_STARTS, true)
+                    .getChunkFuture(candidate.x(), candidate.z(), ChunkStatus.STRUCTURE_REFERENCES, true)
                     .whenComplete((chunkResult, error) -> server.execute(() -> {
                         if (error != null) {
                             finishHits(found, "Chunk scan failed: " + error.getClass().getSimpleName());
@@ -592,9 +603,37 @@ public final class WorldScopeScanner {
                         if (!CANCELLED.get() && chunkResult != null && chunkResult.isSuccess()) {
                             var chunk = chunkResult.orElse(null);
                             if (chunk != null) {
-                                StructureStart start = chunk.getStartForStructure(target);
-                                if (start != null && start.isValid()) {
+                                ArrayList<StructureStart> starts = new ArrayList<>();
+                                try {
+                                    List<StructureStart> referencedOrLocal =
+                                            level.structureManager().startsForStructure(
+                                                    new ChunkPos(candidate.x(), candidate.z()),
+                                                    structure -> structure == target
+                                            );
+                                    if (!referencedOrLocal.isEmpty()) {
+                                        starts.addAll(referencedOrLocal);
+                                        stats.referenceChunksWithStarts++;
+                                    }
+                                } catch (Throwable referenceError) {
+                                    stats.presenceErrors++;
+                                }
+
+                                StructureStart directStart = chunk.getStartForStructure(target);
+                                if (directStart != null && directStart.isValid()
+                                        && starts.stream().noneMatch(existing ->
+                                        sameStructureStart(existing, directStart))) {
+                                    starts.add(directStart);
+                                }
+
+                                int foundFromThisCandidate = 0;
+                                for (StructureStart start : starts) {
+                                    if (start == null || !start.isValid()) continue;
                                     var box = start.getBoundingBox();
+                                    if (containsStructureBounds(found, box)) {
+                                        stats.duplicateStartsIgnored++;
+                                        continue;
+                                    }
+
                                     WorldScopeResult result = new WorldScopeResult(
                                             "structure", wantedId, dimensionId,
                                             box.minX(), box.minY(), box.minZ(),
@@ -603,10 +642,25 @@ public final class WorldScopeScanner {
                                     List<WorldScopeBox> pieces = extractPieceBounds(start);
                                     found.add(new WorldScopeHit(result, pieces, List.of()));
                                     stats.verifiedStarts++;
-                                    if (cacheReportedAbsent) stats.cacheAbsentFound++;
-                                } else {
+                                    foundFromThisCandidate++;
+                                    if (starts.size() > 0 && start != directStart) {
+                                        stats.referencedStartsFound++;
+                                    }
+                                    if (stats.recoveredStartLocations.size() < 12) {
+                                        ChunkPos startPos = start.getPos();
+                                        stats.recoveredStartLocations.add(
+                                                startPos.x() + "," + startPos.z()
+                                        );
+                                    }
+                                }
+
+                                if (cacheReportedAbsent && foundFromThisCandidate > 0) {
+                                    stats.cacheAbsentFound += foundFromThisCandidate;
+                                } else if (cacheReportedAbsent) {
+                                    stats.cacheAbsentEmpty++;
+                                }
+                                if (starts.isEmpty()) {
                                     stats.loadedWithoutStart++;
-                                    if (cacheReportedAbsent) stats.cacheAbsentEmpty++;
                                 }
                             }
                         }
@@ -620,6 +674,29 @@ public final class WorldScopeScanner {
                         );
                     }));
         });
+    }
+
+    private static boolean sameStructureStart(StructureStart first, StructureStart second) {
+        if (first == second) return true;
+        if (first == null || second == null || !first.isValid() || !second.isValid()) return false;
+        var a = first.getBoundingBox();
+        var b = second.getBoundingBox();
+        return a.minX() == b.minX() && a.minY() == b.minY() && a.minZ() == b.minZ()
+                && a.maxX() == b.maxX() && a.maxY() == b.maxY() && a.maxZ() == b.maxZ();
+    }
+
+    private static boolean containsStructureBounds(List<WorldScopeHit> found,
+                                                   net.minecraft.world.level.levelgen.structure.BoundingBox box) {
+        for (WorldScopeHit hit : found) {
+            WorldScopeResult result = hit.result();
+            if ("structure".equals(result.type())
+                    && result.minX() == box.minX() && result.minY() == box.minY()
+                    && result.minZ() == box.minZ() && result.maxX() == box.maxX()
+                    && result.maxY() == box.maxY() && result.maxZ() == box.maxZ()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<WorldScopeBox> extractPieceBounds(StructureStart start) {
@@ -892,7 +969,11 @@ public final class WorldScopeScanner {
         private int cacheAbsentFound;
         private int cacheAbsentEmpty;
         private int cacheAbsentFallbackSkipped;
+        private int referenceChunksWithStarts;
+        private int referencedStartsFound;
+        private int duplicateStartsIgnored;
         private final List<String> cacheAbsentLocations = new ArrayList<>();
+        private final List<String> recoveredStartLocations = new ArrayList<>();
         private int presenceErrors;
         private int loadedWithoutStart;
         private int verifiedStarts;
