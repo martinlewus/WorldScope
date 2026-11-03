@@ -486,7 +486,7 @@ public final class WorldScopeScanner {
         if (index >= candidates.size() || found.size() >= MAX_STRUCTURE_RESULTS) {
             String diagnostic = "Minecraft presence checks: " + stats.savedStarts
                     + " saved starts, " + stats.generationRequired + " need generation, "
-                    + stats.rejectedByMinecraft + " ruled out by placement/biome checks, "
+                    + stats.rejectedByMinecraft + " absent or invalid in Minecraft's presence cache, "
                     + stats.presenceErrors + " check errors, " + stats.loadedWithoutStart
                     + " loaded without a valid start.";
             String message;
@@ -542,8 +542,8 @@ public final class WorldScopeScanner {
             if (presence == StructureCheckResult.START_NOT_PRESENT) {
                 stats.rejectedByMinecraft++;
                 completed = index + 1;
-                status = "Minecraft ruled out " + stats.rejectedByMinecraft
-                        + " candidate position(s) that could not contain this structure...";
+                status = "Minecraft marked " + stats.rejectedByMinecraft
+                        + " candidate chunk(s) as absent or invalid for this structure...";
                 checkCandidateChunks(
                         client, level, target, wantedId, dimensionId,
                         candidates, index + 1, originX, originZ,
