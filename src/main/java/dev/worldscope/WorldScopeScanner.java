@@ -112,11 +112,11 @@ public final class WorldScopeScanner {
             return;
         }
 
-        double[] center = getSearchCenter(client, dimension, targetLevel);
+        double[] center = getSearchCenter(client, dimension);
         int originX = (int) Math.floor(center[0]);
         int originZ = (int) Math.floor(center[1]);
         int originY = Math.max(targetLevel.getMinY(), Math.min(targetLevel.getMaxY() - 1, client.player.blockPosition().getY()));
-        long worldSeed = client.level.getSeed();
+        long worldSeed = server.getWorldGenSettings().options().seed();
 
         CANCELLED.set(false);
         ACTIVE_RESULT.set(null);
@@ -156,7 +156,7 @@ public final class WorldScopeScanner {
         };
     }
 
-    private static double[] getSearchCenter(Minecraft client, ResourceKey<Level> targetDimension, ServerLevel targetLevel) {
+    private static double[] getSearchCenter(Minecraft client, ResourceKey<Level> targetDimension) {
         double x = client.player.getX();
         double z = client.player.getZ();
         ResourceKey<Level> current = client.level.dimension();
@@ -165,8 +165,7 @@ public final class WorldScopeScanner {
         if (current.equals(Level.OVERWORLD) && targetDimension.equals(Level.NETHER)) return new double[]{x / 8.0, z / 8.0};
         if (current.equals(Level.NETHER) && targetDimension.equals(Level.OVERWORLD)) return new double[]{x * 8.0, z * 8.0};
 
-        var spawn = targetLevel.getSharedSpawnPos();
-        return new double[]{spawn.getX(), spawn.getZ()};
+        return new double[]{0.0, 0.0};
     }
 
     private static boolean isInsideRadius(WorldScopeResult result, int originX, int originZ, int radius) {
@@ -482,7 +481,7 @@ public final class WorldScopeScanner {
             ACTIVE_RESULT.set(result);
             Minecraft client = Minecraft.getInstance();
             if (client.level != null && client.getSingleplayerServer() != null) {
-                long seed = client.level.getSeed();
+                long seed = client.getSingleplayerServer().getWorldGenSettings().options().seed();
                 WORKER.execute(() -> WorldScopeCache.save(seed, result));
             }
         }
