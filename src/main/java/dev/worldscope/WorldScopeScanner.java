@@ -585,9 +585,10 @@ public final class WorldScopeScanner {
             }
 
             // A negative presence-cache answer is not allowed to be the final
-            // decision. Load through STRUCTURE_STARTS and inspect the actual
-            // chunk start map anyway. This catches cache misses, stale cache
-            // entries, and reference/placement mismatches without guessing.
+            // decision. Load through STRUCTURE_REFERENCES, then inspect both
+            // the candidate chunk's direct start and all starts referenced by
+            // that chunk. This recovers large structures whose start chunk is
+            // different from the chunk currently being checked.
             // Structure references are written after starts are created.
             // Load through STRUCTURE_REFERENCES so a large structure whose
             // start lies in a neighboring chunk can still be recovered from
