@@ -54,9 +54,10 @@ public final class WorldScopeClient implements ClientModInitializer {
     private static void renderTargetHud(GuiGraphicsExtractor graphics, DeltaTracker tickCounter) {
         Minecraft client = Minecraft.getInstance();
         WorldScopeResult result = WorldScopeScanner.getActiveResult();
-        if (!showCoordinates || client.player == null || result == null) return;
+        if (!showCoordinates || client.player == null || client.level == null
+                || client.getSingleplayerServer() == null || result == null) return;
 
-        String line = result.id() + "  [" + result.minX() + ", " + result.minY() + ", " + result.minZ() + "]";
+        String line = result.id() + "  X " + result.centerX() + "  Y " + result.centerY() + "  Z " + result.centerZ();
         graphics.fill(7, 7, 310, 31, 0xA9000000);
         graphics.text(client.font, Component.literal("WORLDSCOPE  " + result.dimension()), 13, 11, 0xFF80D8FF);
         graphics.text(client.font, Component.literal(line), 13, 21, 0xFFFFFFFF);
