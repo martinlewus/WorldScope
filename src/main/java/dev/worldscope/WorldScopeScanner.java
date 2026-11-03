@@ -417,14 +417,25 @@ public final class WorldScopeScanner {
             }
             Structure target = targetHolder.value();
 
+            // First inspect already-loaded chunks around the scan origin. This is an
+            // independent path that can recover a structure whose saved start is
+            // referenced by a nearby loaded chunk even if placement enumeration or
+            // the structure-presence cache disagrees with the current world seed.
+            LoadedChunkScan loadedScan = scanLoadedChunksNear(
+                    level, target, wantedId, dimensionId, originX, originZ
+            );
+            ArrayList<WorldScopeHit> initialHits = new ArrayList<>(loadedScan.hits());
+
             // Use the placement list already prepared by this dimension's actual
             // ChunkGeneratorStructureState. It excludes structure sets that this
             // generator cannot place and associates the exact placements with the
             // selected structure, unlike scanning every global registry set.
             List<StructurePlacement> placements = generatorState.getPlacementsForStructure(targetHolder);
             if (placements.isEmpty()) {
-                client.execute(() -> finishHits(List.of(),
-                        "This dimension has no valid placement rules for " + wantedId));
+                client.execute(() -> finishHits(initialHits,
+                        "This dimension has no valid placement rules for " + wantedId
+                                + ". Nearby loaded-chunk sweep checked " + loadedScan.loadedChunks()
+                                + " chunks and recovered " + initialHits.size() + " matching start(s)."));
                 return;
             }
 
@@ -441,7 +452,9 @@ public final class WorldScopeScanner {
                         if (CANCELLED.get()) {
                             finishHits(List.of(), "Structure scan cancelled.");
                         } else if (search.candidates().isEmpty()) {
-                            finishHits(List.of(), "No structure placement candidates were found inside that distance.");
+                            finishHits(initialHits, "No structure placement candidates were found inside that distance. "
+                                    + "Nearby loaded-chunk sweep checked " + loadedScan.loadedChunks()
+                                    + " chunks and recovered " + initialHits.size() + " matching start(s).");
                         } else {
                             total = search.candidates().size();
                             completed = 0;
@@ -449,20 +462,95 @@ public final class WorldScopeScanner {
                             checkCandidateChunks(
                                     client, level, target, wantedId, dimensionId,
                                     search.candidates(), 0, originX, originZ,
-                                    new ArrayList<>(), search.budgetReached(), new StructureScanStats()
+                                    new ArrayList<>(initialHits), search.budgetReached(),
+                                    createInitialScanStats(loadedScan)
                             );
                         }
                     });
                 } catch (Throwable error) {
-                    client.execute(() -> finishHits(List.of(),
+                    client.execute(() -> finishHits(initialHits,
                             "Candidate search failed: " + error.getClass().getSimpleName()
-                                    + ": " + error.getMessage()));
+                                    + ": " + error.getMessage()
+                                    + ". Nearby loaded-chunk sweep checked " + loadedScan.loadedChunks()
+                                    + " chunks and recovered " + initialHits.size() + " matching start(s)."));
                 }
             });
         } catch (Throwable error) {
             client.execute(() -> finishHits(List.of(),
                     "Scan error: " + error.getClass().getSimpleName() + ": " + error.getMessage()));
         }
+    }
+
+    private static LoadedChunkScan scanLoadedChunksNear(
+            ServerLevel level,
+            Structure target,
+            String wantedId,
+            String dimensionId,
+            int originX,
+            int originZ
+    ) {
+        final int sweepRadiusChunks = 24;
+        int centerChunkX = Math.floorDiv(originX, 16);
+        int centerChunkZ = Math.floorDiv(originZ, 16);
+        int loadedChunks = 0;
+        int errors = 0;
+        ArrayList<WorldScopeHit> hits = new ArrayList<>();
+
+        // getChunkNow never creates or generates a chunk. This only inspects
+        // chunks that are already loaded in the integrated server.
+        for (int dx = -sweepRadiusChunks; dx <= sweepRadiusChunks; dx++) {
+            for (int dz = -sweepRadiusChunks; dz <= sweepRadiusChunks; dz++) {
+                var chunk = level.getChunkSource().getChunkNow(centerChunkX + dx, centerChunkZ + dz);
+                if (chunk == null) continue;
+                loadedChunks++;
+
+                ChunkPos chunkPos = chunk.getPos();
+                ArrayList<StructureStart> starts = new ArrayList<>();
+                try {
+                    starts.addAll(level.structureManager().startsForStructure(
+                            chunkPos, structure -> structure == target
+                    ));
+                } catch (Throwable ignored) {
+                    errors++;
+                }
+
+                StructureStart direct = chunk.getStartForStructure(target);
+                if (direct != null && direct.isValid()
+                        && starts.stream().noneMatch(existing -> sameStructureStart(existing, direct))) {
+                    starts.add(direct);
+                }
+
+                for (StructureStart start : starts) {
+                    if (start == null || !start.isValid()) continue;
+                    var box = start.getBoundingBox();
+                    if (containsStructureBounds(hits, box)) continue;
+
+                    WorldScopeResult result = new WorldScopeResult(
+                            "structure", wantedId, dimensionId,
+                            box.minX(), box.minY(), box.minZ(),
+                            box.maxX(), box.maxY(), box.maxZ()
+                    );
+                    hits.add(new WorldScopeHit(result, extractPieceBounds(start), List.of()));
+                }
+            }
+        }
+
+        return new LoadedChunkScan(List.copyOf(hits), loadedChunks, errors);
+    }
+
+    private static StructureScanStats createInitialScanStats(LoadedChunkScan loadedScan) {
+        StructureScanStats stats = new StructureScanStats();
+        stats.loadedNearbyChunks = loadedScan.loadedChunks();
+        stats.loadedNearbyStarts = loadedScan.hits().size();
+        stats.loadedNearbyErrors = loadedScan.errors();
+        return stats;
+    }
+
+    private record LoadedChunkScan(
+            List<WorldScopeHit> hits,
+            int loadedChunks,
+            int errors
+    ) {
     }
 
     private static void checkCandidateChunks(
@@ -495,7 +583,10 @@ public final class WorldScopeScanner {
                     + stats.referencedStartsFound + " starts were recovered through references; "
                     + stats.duplicateStartsIgnored + " duplicate references ignored. "
                     + stats.presenceErrors + " check errors; "
-                    + stats.loadedWithoutStart + " loaded candidates had no matching start.";
+                    + stats.loadedWithoutStart + " loaded candidates had no matching start. "
+                    + "Nearby loaded-chunk sweep: " + stats.loadedNearbyChunks + " chunks inspected, "
+                    + stats.loadedNearbyStarts + " matching start(s) recovered, "
+                    + stats.loadedNearbyErrors + " reference-read error(s).";
             if (stats.cacheAbsentLocations.size() > 0) {
                 diagnostic += " Cache-negative chunks checked: "
                         + String.join(", ", stats.cacheAbsentLocations) + ".";
@@ -978,6 +1069,9 @@ public final class WorldScopeScanner {
         private int presenceErrors;
         private int loadedWithoutStart;
         private int verifiedStarts;
+        private int loadedNearbyChunks;
+        private int loadedNearbyStarts;
+        private int loadedNearbyErrors;
     }
 
     private record BiomeGridPoint(int x, int z) {
