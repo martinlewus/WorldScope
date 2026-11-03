@@ -12,7 +12,7 @@ import java.util.Properties;
 import net.minecraft.client.Minecraft;
 
 public final class WorldScopeCache {
-    private static final String CACHE_VERSION = "1";
+    private static final String CACHE_VERSION = "2";
 
     private WorldScopeCache() {
     }
