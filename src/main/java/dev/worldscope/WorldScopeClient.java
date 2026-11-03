@@ -97,7 +97,7 @@ public final class WorldScopeClient implements ClientModInitializer {
                 + "|" + result.minX() + "|" + result.minZ();
         if (near && (!wasNearTarget || !key.equals(lastAlertKey))) {
             client.getSoundManager().play(
-                    SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.35F)
+                    SimpleSoundInstance.forUI(SoundEvents.PLAYER_LEVELUP, 1.15F)
             );
         }
         wasNearTarget = near;
