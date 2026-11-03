@@ -37,6 +37,7 @@ public final class WorldScopeScanner {
     private static final int MAX_STRUCTURE_CANDIDATES = 8192;
     private static final int MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT = 4096;
     private static final int MAX_STRUCTURE_RESULTS = 128;
+    private static final int MAX_CACHE_NEGATIVE_FALLBACK_CHECKS = 512;
     private static final int MAX_PLACEMENT_REGION_TESTS = 1_000_000;
     private static final int MAX_BIOME_SAMPLES = 750_000;
     private static final int MAX_BIOME_RESULTS = 128;
@@ -484,11 +485,22 @@ public final class WorldScopeScanner {
         }
 
         if (index >= candidates.size() || found.size() >= MAX_STRUCTURE_RESULTS) {
-            String diagnostic = "Minecraft presence checks: " + stats.savedStarts
-                    + " saved starts, " + stats.generationRequired + " need generation, "
-                    + stats.rejectedByMinecraft + " absent or invalid in Minecraft's presence cache, "
-                    + stats.presenceErrors + " check errors, " + stats.loadedWithoutStart
-                    + " loaded without a valid start.";
+            String diagnostic = "Presence check: " + stats.savedStarts
+                    + " reported present, " + stats.generationRequired + " require generation, "
+                    + stats.cacheAbsentCandidates + " reported absent by cache; WorldScope loaded "
+                    + stats.cacheAbsentVerified + " of those anyway ("
+                    + stats.cacheAbsentFound + " contained the selected structure, "
+                    + stats.cacheAbsentEmpty + " did not). "
+                    + stats.presenceErrors + " check errors; "
+                    + stats.loadedWithoutStart + " loaded candidates had no matching start.";
+            if (stats.cacheAbsentLocations.size() > 0) {
+                diagnostic += " Cache-negative chunks checked: "
+                        + String.join(", ", stats.cacheAbsentLocations) + ".";
+            }
+            if (stats.cacheAbsentFallbackSkipped > 0) {
+                diagnostic += " " + stats.cacheAbsentFallbackSkipped
+                        + " additional cache-negative candidates were not verified because the fallback safety cap was reached.";
+            }
             String message;
             if (found.isEmpty()) {
                 message = "No matching structure start was verified. Checked "
@@ -539,25 +551,36 @@ public final class WorldScopeScanner {
                 presence = StructureCheckResult.CHUNK_LOAD_NEEDED;
             }
 
-            if (presence == StructureCheckResult.START_NOT_PRESENT) {
-                stats.rejectedByMinecraft++;
-                completed = index + 1;
-                status = "Minecraft marked " + stats.rejectedByMinecraft
-                        + " candidate chunk(s) as absent or invalid for this structure...";
-                checkCandidateChunks(
-                        client, level, target, wantedId, dimensionId,
-                        candidates, index + 1, originX, originZ,
-                        found, placementBudgetReached, stats
-                );
-                return;
-            }
-
-            if (presence == StructureCheckResult.START_PRESENT) {
+            boolean cacheReportedAbsent = presence == StructureCheckResult.START_NOT_PRESENT;
+            if (cacheReportedAbsent) {
+                stats.cacheAbsentCandidates++;
+                if (stats.cacheAbsentVerified >= MAX_CACHE_NEGATIVE_FALLBACK_CHECKS) {
+                    stats.cacheAbsentFallbackSkipped++;
+                    completed = index + 1;
+                    status = "Verifying candidate chunks; cache-negative fallback safety cap reached...";
+                    checkCandidateChunks(
+                            client, level, target, wantedId, dimensionId,
+                            candidates, index + 1, originX, originZ,
+                            found, placementBudgetReached, stats
+                    );
+                    return;
+                }
+                stats.cacheAbsentVerified++;
+                if (stats.cacheAbsentLocations.size() < 8) {
+                    stats.cacheAbsentLocations.add(candidate.x() + "," + candidate.z());
+                }
+                status = "Cache said absent for " + stats.cacheAbsentVerified
+                        + " candidate(s); independently verifying chunk data...";
+            } else if (presence == StructureCheckResult.START_PRESENT) {
                 stats.savedStarts++;
             } else {
                 stats.generationRequired++;
             }
 
+            // A negative presence-cache answer is not allowed to be the final
+            // decision. Load through STRUCTURE_STARTS and inspect the actual
+            // chunk start map anyway. This catches cache misses, stale cache
+            // entries, and reference/placement mismatches without guessing.
             level.getChunkSource()
                     .getChunkFuture(candidate.x(), candidate.z(), ChunkStatus.STRUCTURE_STARTS, true)
                     .whenComplete((chunkResult, error) -> server.execute(() -> {
@@ -580,8 +603,10 @@ public final class WorldScopeScanner {
                                     List<WorldScopeBox> pieces = extractPieceBounds(start);
                                     found.add(new WorldScopeHit(result, pieces, List.of()));
                                     stats.verifiedStarts++;
+                                    if (cacheReportedAbsent) stats.cacheAbsentFound++;
                                 } else {
                                     stats.loadedWithoutStart++;
+                                    if (cacheReportedAbsent) stats.cacheAbsentEmpty++;
                                 }
                             }
                         }
@@ -862,7 +887,12 @@ public final class WorldScopeScanner {
     private static final class StructureScanStats {
         private int savedStarts;
         private int generationRequired;
-        private int rejectedByMinecraft;
+        private int cacheAbsentCandidates;
+        private int cacheAbsentVerified;
+        private int cacheAbsentFound;
+        private int cacheAbsentEmpty;
+        private int cacheAbsentFallbackSkipped;
+        private final List<String> cacheAbsentLocations = new ArrayList<>();
         private int presenceErrors;
         private int loadedWithoutStart;
         private int verifiedStarts;
