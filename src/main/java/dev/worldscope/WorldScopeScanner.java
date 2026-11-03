@@ -103,23 +103,32 @@ public final class WorldScopeScanner {
             return;
         }
 
-        double[] center = getSearchCenter(client, dimension);
+        double[] center = getSearchCenter(client, dimension, targetLevel);
         int originX = (int) Math.floor(center[0]);
         int originZ = (int) Math.floor(center[1]);
         int originY = Math.max(targetLevel.getMinY(), Math.min(targetLevel.getMaxY() - 1, client.player.blockPosition().getY()));
+        long worldSeed = client.level.getSeed();
 
         CANCELLED.set(false);
         ACTIVE_RESULT.set(null);
         running = true;
         completed = 0;
         total = 0;
-        status = "Preparing " + type + " scan...";
+        status = "Checking saved scan cache...";
 
-        if ("biome".equals(type)) {
-            WORKER.execute(() -> scanBiome(targetLevel, id, dimensionId, originX, originY, originZ, radius));
-        } else {
-            server.execute(() -> prepareStructureScan(client, targetLevel, id, dimensionId, originX, originZ, radius));
-        }
+        WORKER.execute(() -> {
+            WorldScopeResult cached = WorldScopeCache.load(worldSeed, dimensionId, type, id);
+            if (cached != null && isInsideRadius(cached, originX, originZ, radius)) {
+                client.execute(() -> finish(cached, "Loaded saved location."));
+                return;
+            }
+
+            if ("biome".equals(type)) {
+                scanBiome(targetLevel, id, dimensionId, originX, originY, originZ, radius);
+            } else {
+                server.execute(() -> prepareStructureScan(client, targetLevel, id, dimensionId, originX, originZ, radius));
+            }
+        });
     }
 
     private static ResourceKey<Level> parseDimension(String id) {
@@ -131,7 +140,7 @@ public final class WorldScopeScanner {
         };
     }
 
-    private static double[] getSearchCenter(Minecraft client, ResourceKey<Level> targetDimension) {
+    private static double[] getSearchCenter(Minecraft client, ResourceKey<Level> targetDimension, ServerLevel targetLevel) {
         double x = client.player.getX();
         double z = client.player.getZ();
         ResourceKey<Level> current = client.level.dimension();
@@ -140,7 +149,14 @@ public final class WorldScopeScanner {
         if (current.equals(Level.OVERWORLD) && targetDimension.equals(Level.NETHER)) return new double[]{x / 8.0, z / 8.0};
         if (current.equals(Level.NETHER) && targetDimension.equals(Level.OVERWORLD)) return new double[]{x * 8.0, z * 8.0};
 
-        return new double[]{0.0, 0.0};
+        var spawn = targetLevel.getSharedSpawnPos();
+        return new double[]{spawn.getX(), spawn.getZ()};
+    }
+
+    private static boolean isInsideRadius(WorldScopeResult result, int originX, int originZ, int radius) {
+        double dx = Math.max(Math.max(result.minX() - originX, 0.0), originX - (result.maxX() + 1.0));
+        double dz = Math.max(Math.max(result.minZ() - originZ, 0.0), originZ - (result.maxZ() + 1.0));
+        return dx * dx + dz * dz <= (double) radius * radius;
     }
 
     private static void scanBiome(ServerLevel level, String wantedId, String dimensionId,
@@ -374,7 +390,14 @@ public final class WorldScopeScanner {
     }
 
     private static void finish(WorldScopeResult result, String message) {
-        if (result != null) ACTIVE_RESULT.set(result);
+        if (result != null) {
+            ACTIVE_RESULT.set(result);
+            Minecraft client = Minecraft.getInstance();
+            if (client.level != null && client.getSingleplayerServer() != null) {
+                long seed = client.level.getSeed();
+                WORKER.execute(() -> WorldScopeCache.save(seed, result));
+            }
+        }
         running = false;
         status = result == null ? message : message + " " + result.id();
     }

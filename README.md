@@ -19,7 +19,8 @@ WorldScope is being rebuilt as a **single-player world scanner**. It does not is
 
 - WorldScope is intentionally single-player only. The integrated server is used directly; multiplayer sessions are rejected.
 - Structure scans use structure placement data and generated structure starts, not `/locate` or the locate command's nearest-structure API.
-- Candidate structure chunks are checked sequentially and capped per scan to limit chunk-generation pressure.
+- Candidate placement enumeration runs on a dedicated worker; actual structure-start chunk requests are issued one at a time through the integrated server. Candidate chunks are capped per scan to limit chunk-generation pressure.
+- Successful target locations are saved under `config/worldscope/locations.properties`, keyed by world seed, dimension, target type, and registry ID. A cached result is reused only when it remains inside the requested radius.
 - Biome results are approximate sample cells, not exact biome polygons yet.
 - The through-wall ESP box is implemented for the active result. Detailed biome border meshes, subtype inference, persistent seed cache, proximity alerts, and alert audio remain follow-up layers.
 
