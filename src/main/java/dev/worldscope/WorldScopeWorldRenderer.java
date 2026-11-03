@@ -62,7 +62,9 @@ public final class WorldScopeWorldRenderer {
         Minecraft client = Minecraft.getInstance();
         WorldScopeResult result = WorldScopeScanner.getActiveResult();
 
-        if (!WorldScopeClient.isEspEnabled() || client.level == null
+        boolean espEnabled = WorldScopeClient.isEspEnabled();
+        boolean tracerEnabled = WorldScopeUserSettings.isTracerEnabled();
+        if ((!espEnabled && !tracerEnabled) || client.level == null
                 || client.getSingleplayerServer() == null || result == null) {
             boxState = null;
             return;
@@ -84,7 +86,8 @@ public final class WorldScopeWorldRenderer {
                 result.maxX() + 1, result.maxY(), result.maxZ() + 1,
                 structureBoxes, biomeCells, WorldScopeScanner.getShapeDetail(),
                 WorldScopeUserSettings.getBoxColor(),
-                WorldScopeUserSettings.isTracerEnabled()
+                espEnabled,
+                tracerEnabled
         );
     }
 
@@ -121,6 +124,7 @@ public final class WorldScopeWorldRenderer {
         float green = ((rgb >> 8) & 0xFF) / 255.0f;
         float blue = (rgb & 0xFF) / 255.0f;
 
+        if (state.espEnabled()) {
         if (state.biomeCells().isEmpty()) {
             // Detail 1 is the original single bounding box. Higher settings fade
             // that broad box back and progressively reveal the generated room/piece
@@ -171,6 +175,7 @@ public final class WorldScopeWorldRenderer {
                         minX, minY, minZ, maxX, maxY, maxZ, red, green, blue, 0.45f);
             }
             addBiomeBorders(matrices.last().pose(), vertices, state.biomeCells(), red, green, blue);
+        }
         }
         if (state.tracerEnabled()) {
             Minecraft client = Minecraft.getInstance();
@@ -367,6 +372,7 @@ public final class WorldScopeWorldRenderer {
             List<WorldScopeBiomeCell> biomeCells,
             int shapeDetail,
             int colorRgb,
+            boolean espEnabled,
             boolean tracerEnabled
     ) {
     }
