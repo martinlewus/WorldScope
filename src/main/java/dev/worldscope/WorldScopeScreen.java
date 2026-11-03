@@ -105,7 +105,7 @@ public final class WorldScopeScreen extends Screen {
             } else {
                 var registry = client.level.registryAccess().lookupOrThrow(Registries.BIOME);
                 registry.listElements().forEach(holder ->
-                        holder.unwrapKey().ifPresent(key -> catalog.add(key.location().toString())));
+                        holder.unwrapKey().ifPresent(key -> catalog.add(key.identifier().toString())));
             }
         } catch (Throwable error) {
             status = "Could not read world registry: " + error.getMessage();
