@@ -50,7 +50,7 @@ public final class WorldScopeScreen extends Screen {
     private String marqueeResetKey = "";
     private boolean colorPickerOpen;
     private static final int COLOR_SWATCH_SIZE = 14;
-    private static final int COLOR_PICKER_SIZE = 96;
+    private static final int COLOR_PICKER_SIZE = 104;
     private static final int COLOR_WHEEL_SIZE = 72;
     private static final int COLOR_WHEEL_STEP = 3;
 
@@ -640,7 +640,7 @@ public final class WorldScopeScreen extends Screen {
         int markerY = wheelTop + Math.round(center - (float) Math.sin(markerAngle) * markerDistance);
         graphics.fill(markerX - 3, markerY - 3, markerX + 4, markerY + 4, 0xFF101010);
         graphics.fill(markerX - 1, markerY - 1, markerX + 2, markerY + 2, 0xFFFFFFFF);
-        graphics.text(font, Component.literal("CLICK TO APPLY"), x + 7, y + 90, 0xFFBBBBBB);
+        graphics.text(font, Component.literal("CLICK TO APPLY"), x + 7, y + 94, 0xFFBBBBBB);
     }
 
     private boolean updateColorFromWheel(double mouseX, double mouseY) {
