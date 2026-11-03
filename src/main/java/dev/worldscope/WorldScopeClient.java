@@ -52,13 +52,13 @@ public final class WorldScopeClient implements ClientModInitializer {
             // WorldScope screen. The screen has its own event handler for arrow
             // navigation while the catalog is open.
             while (previousResultKey.consumeClick()) {
-                if (client.screen == null && client.player != null && client.level != null
+                if (client.gui.screen() == null && client.player != null && client.level != null
                         && client.getSingleplayerServer() != null) {
                     WorldScopeScanner.previousResult();
                 }
             }
             while (nextResultKey.consumeClick()) {
-                if (client.screen == null && client.player != null && client.level != null
+                if (client.gui.screen() == null && client.player != null && client.level != null
                         && client.getSingleplayerServer() != null) {
                     WorldScopeScanner.nextResult();
                 }
