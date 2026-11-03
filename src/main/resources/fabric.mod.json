@@ -7,6 +7,7 @@
   "authors": ["WorldScope"],
   "contact": {},
   "license": "MIT",
+  "icon": "assets/worldscope/icon.png",
   "environment": "client",
   "entrypoints": {"client": ["dev.worldscope.WorldScopeClient"]},
   "depends": {
