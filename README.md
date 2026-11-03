@@ -1,4 +1,4 @@
-# WorldScope 2.0.8 — Fabric 26.2
+# WorldScope 2.0.9 — Fabric 26.2
 
 WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
@@ -16,7 +16,7 @@ WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 - Search the catalog and use village/temple subtype filters.
 - Select Overworld, Nether, or End.
 - Maximum search radius from 128 to 10,000,000 blocks, with workload limits and partial-scan reporting.
-- Native Minecraft structure-presence checks followed by actual `STRUCTURE_STARTS` chunk verification.
+- Native Minecraft structure-presence checks followed by actual `STRUCTURE_STARTS` chunk verification. `START_NOT_PRESENT` means Minecraft's presence cache found no matching saved start or ruled the candidate out; it is not a count of structures WorldScope found and then removed.
 - Up to 128 structure results and 128 sampled biome regions, sorted by distance, with menu and in-game keyboard navigation.
 - Shape Detail 1–8, individual structure-piece outlines and sampled biome borders.
 - Search radius and selected targets saved in `config/worldscope/settings.properties`.
@@ -33,7 +33,7 @@ WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
 ## Installation
 
-Place `worldscope-2.0.8.jar` in `.minecraft/mods` and remove older WorldScope JARs.
+Place `worldscope-2.0.9.jar` in `.minecraft/mods` and remove older WorldScope JARs.
 
 ## Build
 
