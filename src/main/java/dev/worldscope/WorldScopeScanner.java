@@ -202,60 +202,106 @@ public final class WorldScopeScanner {
             }
 
             Object generatorState = level.getChunkSource().getGeneratorState();
-            List<ChunkCandidate> candidates = findCandidates(placements, generatorState, originX, originZ, radius);
-            if (candidates.isEmpty()) {
-                client.execute(() -> finish(null, "No candidate chunks for " + wantedId + " were found in that radius."));
-                return;
-            }
 
-            total = candidates.size();
-            status = "Checking candidate chunks...";
-            AtomicBoolean found = new AtomicBoolean(false);
-            AtomicInteger checked = new AtomicInteger();
-            CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
-
-            for (ChunkCandidate candidate : candidates) {
-                chain = chain.thenCompose(ignored -> {
-                    if (CANCELLED.get() || found.get()) return CompletableFuture.completedFuture(null);
-
-                    return level.getChunkSource()
-                            .getChunkFuture(candidate.x(), candidate.z(), ChunkStatus.STRUCTURE_STARTS, true)
-                            .thenAccept(optionalChunk -> {
-                                if (!CANCELLED.get() && optionalChunk.isSuccess()) {
-                                    var chunk = optionalChunk.orElse(null);
-                                    if (chunk != null) {
-                                        StructureStart start = chunk.getStartForStructure(target);
-                                        if (start != null && start.isValid() && found.compareAndSet(false, true)) {
-                                            var box = start.getBoundingBox();
-                                            WorldScopeResult result = new WorldScopeResult(
-                                                    "structure", wantedId, dimensionId,
-                                                    box.minX(), box.minY(), box.minZ(),
-                                                    box.maxX(), box.maxY(), box.maxZ()
-                                            );
-                                            ACTIVE_RESULT.set(result);
-                                            client.execute(() -> finish(result, "Structure found."));
-                                        }
-                                    }
-                                }
-                                completed = checked.incrementAndGet();
-                                status = "Checking candidate chunks...";
-                            });
-                });
-            }
-
-            chain.whenComplete((ignored, error) -> client.execute(() -> {
-                if (error != null) {
-                    finish(null, "Scan failed: " + error.getClass().getSimpleName() + ": " + error.getMessage());
-                } else if (CANCELLED.get()) {
-                    running = false;
-                    status = "Scan cancelled.";
-                } else if (!found.get()) {
-                    finish(null, "No generated start found in the selected radius.");
+            // Candidate enumeration may cover more than a million chunk coordinates
+            // at the maximum radius. Keep that CPU work off the integrated-server tick.
+            WORKER.execute(() -> {
+                try {
+                    List<ChunkCandidate> candidates = findCandidates(
+                            placements, generatorState, originX, originZ, radius
+                    );
+                    client.execute(() -> {
+                        if (CANCELLED.get()) {
+                            running = false;
+                            status = "Scan cancelled.";
+                        } else if (candidates.isEmpty()) {
+                            finish(null, "No candidate chunks for " + wantedId + " were found in that radius.");
+                        } else {
+                            total = candidates.size();
+                            completed = 0;
+                            status = "Checking candidate chunks...";
+                            checkCandidateChunks(client, level, target, wantedId, dimensionId,
+                                    candidates, 0, new AtomicInteger());
+                        }
+                    });
+                } catch (Throwable error) {
+                    client.execute(() -> finish(null,
+                            "Candidate search failed: " + error.getClass().getSimpleName()
+                                    + ": " + error.getMessage()));
                 }
-            }));
+            });
         } catch (Throwable error) {
             client.execute(() -> finish(null, "Scan error: " + error.getClass().getSimpleName() + ": " + error.getMessage()));
         }
+    }
+
+    private static void checkCandidateChunks(
+            Minecraft client,
+            ServerLevel level,
+            Structure target,
+            String wantedId,
+            String dimensionId,
+            List<ChunkCandidate> candidates,
+            int index,
+            AtomicInteger checked
+    ) {
+        if (CANCELLED.get()) {
+            running = false;
+            status = "Scan cancelled.";
+            return;
+        }
+
+        if (index >= candidates.size()) {
+            finish(null, "No generated start found in the selected radius.");
+            return;
+        }
+
+        var server = client.getSingleplayerServer();
+        if (server == null) {
+            running = false;
+            status = "Integrated server stopped.";
+            return;
+        }
+
+        ChunkCandidate candidate = candidates.get(index);
+        server.execute(() -> {
+            if (CANCELLED.get()) {
+                running = false;
+                status = "Scan cancelled.";
+                return;
+            }
+
+            level.getChunkSource()
+                    .getChunkFuture(candidate.x(), candidate.z(), ChunkStatus.STRUCTURE_STARTS, true)
+                    .whenComplete((chunkResult, error) -> server.execute(() -> {
+                        if (error != null) {
+                            finish(null, "Chunk scan failed: " + error.getClass().getSimpleName());
+                            return;
+                        }
+
+                        if (!CANCELLED.get() && chunkResult != null && chunkResult.isSuccess()) {
+                            var chunk = chunkResult.orElse(null);
+                            if (chunk != null) {
+                                StructureStart start = chunk.getStartForStructure(target);
+                                if (start != null && start.isValid()) {
+                                    var box = start.getBoundingBox();
+                                    WorldScopeResult result = new WorldScopeResult(
+                                            "structure", wantedId, dimensionId,
+                                            box.minX(), box.minY(), box.minZ(),
+                                            box.maxX(), box.maxY(), box.maxZ()
+                                    );
+                                    client.execute(() -> finish(result, "Structure found."));
+                                    return;
+                                }
+                            }
+                        }
+
+                        completed = checked.incrementAndGet();
+                        status = "Checking candidate chunks...";
+                        checkCandidateChunks(client, level, target, wantedId, dimensionId,
+                                candidates, index + 1, checked);
+                    }));
+        });
     }
 
     private static Structure findStructure(ServerLevel level, String wantedId) {
