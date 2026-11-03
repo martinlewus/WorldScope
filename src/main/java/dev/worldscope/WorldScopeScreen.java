@@ -48,6 +48,11 @@ public final class WorldScopeScreen extends Screen {
     private float marqueeOffsetPx;
     private int marqueeDelayTicks = MARQUEE_START_DELAY_TICKS;
     private String marqueeResetKey = "";
+    private boolean colorPickerOpen;
+    private static final int COLOR_SWATCH_SIZE = 14;
+    private static final int COLOR_PICKER_SIZE = 96;
+    private static final int COLOR_WHEEL_SIZE = 72;
+    private static final int COLOR_WHEEL_STEP = 3;
 
     public WorldScopeScreen() {
         super(Component.literal("WorldScope"));
@@ -213,24 +218,28 @@ public final class WorldScopeScreen extends Screen {
         int infoWidth = Math.max(1, infoRight - infoLeft);
         if (compactUi) {
             addRenderableWidget(new ShapeDetailSlider(
-                    infoLeft + 8, listBottom - 64, Math.max(70, infoWidth - 16), 16,
+                    infoLeft + 8, listBottom - 86, Math.max(70, infoWidth - 16), 16,
                     WorldScopeScanner.getShapeDetail()
             ));
 
-            int toggleY = listBottom - 42;
+            int firstToggleY = listBottom - 63;
             addRenderableWidget(Button.builder(Component.literal("ESP " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleEsp();
                         status = "Through-wall target box " + (WorldScopeClient.isEspEnabled() ? "enabled." : "disabled.");
                         rebuildControls();
-                    }).bounds(infoLeft + 8, toggleY, 62, 16).build());
+                    }).bounds(infoLeft + 8, firstToggleY, 62, 16).build());
+
+            addRenderableWidget(Button.builder(Component.literal("TRACER " + (WorldScopeUserSettings.isTracerEnabled() ? "ON" : "OFF")),
+                    button -> toggleTracer())
+                    .bounds(infoLeft + 74, firstToggleY, Math.min(82, Math.max(58, infoWidth - 82)), 16).build());
 
             addRenderableWidget(Button.builder(Component.literal("ALERTS " + (WorldScopeClient.areProximityAlertsEnabled() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleProximityAlerts();
                         status = "Proximity alerts " + (WorldScopeClient.areProximityAlertsEnabled() ? "enabled." : "disabled.");
                         rebuildControls();
-                    }).bounds(infoLeft + 74, toggleY, Math.min(76, Math.max(58, infoWidth - 82)), 16).build());
+                    }).bounds(infoLeft + 8, listBottom - 42, Math.max(70, infoWidth - 16), 16).build());
 
             EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 8, listBottom - 20, 46, 16);
             addRenderableWidget(alertRadiusBox);
@@ -248,20 +257,30 @@ public final class WorldScopeScreen extends Screen {
                         WorldScopeClient.toggleEsp();
                         status = "Through-wall target box " + (WorldScopeClient.isEspEnabled() ? "enabled." : "disabled.");
                         rebuildControls();
-                    }).bounds(infoLeft + 10, toggleY, 78, 20).build());
+                    }).bounds(infoLeft + 10, toggleY, 70, 20).build());
+
+            addRenderableWidget(Button.builder(Component.literal("TRACER: " + (WorldScopeUserSettings.isTracerEnabled() ? "ON" : "OFF")),
+                    button -> toggleTracer())
+                    .bounds(infoLeft + 86, toggleY, 82, 20).build());
 
             addRenderableWidget(Button.builder(Component.literal("ALERTS: " + (WorldScopeClient.areProximityAlertsEnabled() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleProximityAlerts();
                         status = "Proximity alerts " + (WorldScopeClient.areProximityAlertsEnabled() ? "enabled." : "disabled.");
                         rebuildControls();
-                    }).bounds(infoLeft + 94, toggleY, 92, 20).build());
+                    }).bounds(infoLeft + 174, toggleY, 92, 20).build());
 
             EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 10, listBottom - 27, 64, 20);
             addRenderableWidget(alertRadiusBox);
             addRenderableWidget(Button.builder(Component.literal("SET ALERT RANGE"), button -> setAlertRange(alertRadiusBox))
                     .bounds(infoLeft + 82, listBottom - 27, Math.min(112, Math.max(88, infoWidth - 92)), 20).build());
         }
+    }
+
+    private void toggleTracer() {
+        boolean enabled = WorldScopeUserSettings.toggleTracerEnabled();
+        status = "Target tracer " + (enabled ? "enabled." : "disabled.");
+        rebuildControls();
     }
 
     private EditBox createAlertRadiusBox(int x, int y, int boxWidth, int boxHeight) {
@@ -489,9 +508,9 @@ public final class WorldScopeScreen extends Screen {
         graphics.enableScissor(left + 3, top + 1, right - 3, bottom - 1);
         graphics.pose().pushMatrix();
         graphics.pose().translate(-offset, 0.0f);
-        graphics.text(font, Component.literal(line), textX, textY, 0xFFFFFFFF);
+        graphics.text(font, Component.literal(line), textX, textY, 0xFF69CFFF);
         if (font.width(line) > availableWidth) {
-            graphics.text(font, Component.literal(line), textX + cycleWidth, textY, 0xFFFFFFFF);
+            graphics.text(font, Component.literal(line), textX + cycleWidth, textY, 0xFF69CFFF);
         }
         graphics.pose().popMatrix();
         graphics.disableScissor();
@@ -521,6 +540,124 @@ public final class WorldScopeScreen extends Screen {
         int end = value.length();
         while (end > 0 && font.width(value.substring(0, end) + suffix) > maxWidth) end--;
         return value.substring(0, end) + suffix;
+    }
+
+    private int colorSwatchX() {
+        return panelLeft + panelWidth - 26;
+    }
+
+    private int colorSwatchY() {
+        return panelTop + 7;
+    }
+
+    private int colorPickerLeft() {
+        return Math.max(4, Math.min(panelLeft + panelWidth - COLOR_PICKER_SIZE - 6,
+                width - COLOR_PICKER_SIZE - 4));
+    }
+
+    private int colorPickerTop() {
+        return Math.max(4, Math.min(panelTop + 30, height - COLOR_PICKER_SIZE - 4));
+    }
+
+    private static int hsvToRgb(float hue, float saturation, float value) {
+        float h = (hue - (float) Math.floor(hue)) * 6.0f;
+        int sector = (int) Math.floor(h);
+        float fraction = h - sector;
+        float p = value * (1.0f - saturation);
+        float q = value * (1.0f - fraction * saturation);
+        float t = value * (1.0f - (1.0f - fraction) * saturation);
+        float r, g, b;
+        switch (sector % 6) {
+            case 0 -> { r = value; g = t; b = p; }
+            case 1 -> { r = q; g = value; b = p; }
+            case 2 -> { r = p; g = value; b = t; }
+            case 3 -> { r = p; g = q; b = value; }
+            case 4 -> { r = t; g = p; b = value; }
+            default -> { r = value; g = p; b = q; }
+        }
+        return ((int) (r * 255) << 16) | ((int) (g * 255) << 8) | (int) (b * 255);
+    }
+
+    private static float[] rgbToHueSaturation(int rgb) {
+        float r = ((rgb >> 16) & 0xFF) / 255.0f;
+        float g = ((rgb >> 8) & 0xFF) / 255.0f;
+        float b = (rgb & 0xFF) / 255.0f;
+        float max = Math.max(r, Math.max(g, b));
+        float min = Math.min(r, Math.min(g, b));
+        float delta = max - min;
+        float hue;
+        if (delta == 0.0f) hue = 0.0f;
+        else if (max == r) hue = ((g - b) / delta) % 6.0f;
+        else if (max == g) hue = (b - r) / delta + 2.0f;
+        else hue = (r - g) / delta + 4.0f;
+        hue /= 6.0f;
+        if (hue < 0.0f) hue += 1.0f;
+        float saturation = max == 0.0f ? 0.0f : delta / max;
+        return new float[]{hue, saturation};
+    }
+
+    private void drawColorSwatch(GuiGraphicsExtractor graphics) {
+        int x = colorSwatchX();
+        int y = colorSwatchY();
+        graphics.fill(x - 2, y - 2, x + COLOR_SWATCH_SIZE + 2, y + COLOR_SWATCH_SIZE + 2, 0xFF555555);
+        graphics.fill(x, y, x + COLOR_SWATCH_SIZE, y + COLOR_SWATCH_SIZE,
+                0xFF000000 | WorldScopeUserSettings.getBoxColor());
+        graphics.fill(x + 2, y + 2, x + COLOR_SWATCH_SIZE - 2, y + 3, 0x66FFFFFF);
+    }
+
+    private void drawColorPicker(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        if (!colorPickerOpen) return;
+
+        int x = colorPickerLeft();
+        int y = colorPickerTop();
+        graphics.fill(x - 2, y - 2, x + COLOR_PICKER_SIZE + 2, y + COLOR_PICKER_SIZE + 2, 0xFF555555);
+        graphics.fill(x, y, x + COLOR_PICKER_SIZE, y + COLOR_PICKER_SIZE, 0xFF202020);
+        graphics.text(font, Component.literal("ESP COLOR"), x + 7, y + 5, 0xFFFFFFFF);
+
+        int wheelLeft = x + 12;
+        int wheelTop = y + 17;
+        float center = COLOR_WHEEL_SIZE / 2.0f;
+        float radius = center - 1.0f;
+        for (int py = 0; py < COLOR_WHEEL_SIZE; py += COLOR_WHEEL_STEP) {
+            for (int px = 0; px < COLOR_WHEEL_SIZE; px += COLOR_WHEEL_STEP) {
+                float dx = (px + COLOR_WHEEL_STEP * 0.5f - center) / radius;
+                float dy = (py + COLOR_WHEEL_STEP * 0.5f - center) / radius;
+                float distance = (float) Math.sqrt(dx * dx + dy * dy);
+                if (distance > 1.0f) continue;
+                float hue = (float) (Math.atan2(-dy, dx) / (Math.PI * 2.0));
+                if (hue < 0.0f) hue += 1.0f;
+                int rgb = hsvToRgb(hue, distance, 1.0f);
+                graphics.fill(wheelLeft + px, wheelTop + py,
+                        wheelLeft + px + COLOR_WHEEL_STEP, wheelTop + py + COLOR_WHEEL_STEP,
+                        0xFF000000 | rgb);
+            }
+        }
+
+        float[] hueSat = rgbToHueSaturation(WorldScopeUserSettings.getBoxColor());
+        double markerAngle = hueSat[0] * Math.PI * 2.0;
+        float markerDistance = hueSat[1] * radius;
+        int markerX = wheelLeft + Math.round(center + (float) Math.cos(markerAngle) * markerDistance);
+        int markerY = wheelTop + Math.round(center - (float) Math.sin(markerAngle) * markerDistance);
+        graphics.fill(markerX - 3, markerY - 3, markerX + 4, markerY + 4, 0xFF101010);
+        graphics.fill(markerX - 1, markerY - 1, markerX + 2, markerY + 2, 0xFFFFFFFF);
+        graphics.text(font, Component.literal("CLICK TO APPLY"), x + 7, y + 90, 0xFFBBBBBB);
+    }
+
+    private boolean updateColorFromWheel(double mouseX, double mouseY) {
+        int wheelLeft = colorPickerLeft() + 12;
+        int wheelTop = colorPickerTop() + 17;
+        double center = COLOR_WHEEL_SIZE / 2.0;
+        double radius = center - 1.0;
+        double dx = (mouseX - wheelLeft - center) / radius;
+        double dy = (wheelTop + center - mouseY) / radius;
+        double distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance > 1.0) return false;
+        float hue = (float) (Math.atan2(dy, dx) / (Math.PI * 2.0));
+        if (hue < 0.0f) hue += 1.0f;
+        int rgb = hsvToRgb(hue, (float) distance, 1.0f);
+        WorldScopeUserSettings.setBoxColor(rgb);
+        status = String.format("ESP colour changed to #%06X.", rgb);
+        return true;
     }
 
     private void drawDimensionButtons(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
@@ -637,6 +774,8 @@ public final class WorldScopeScreen extends Screen {
         drawMarquee(graphics, scanStatus, statusLeft, statusTop, statusRight, statusBottom, partialTick);
 
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
+        drawColorSwatch(graphics);
+        drawColorPicker(graphics, mouseX, mouseY);
     }
 
     @Override
@@ -660,6 +799,36 @@ public final class WorldScopeScreen extends Screen {
         int button = event.button();
 
         if (button == 0) {
+            int swatchX = colorSwatchX();
+            int swatchY = colorSwatchY();
+            if (mouseX >= swatchX - 2 && mouseX <= swatchX + COLOR_SWATCH_SIZE + 2
+                    && mouseY >= swatchY - 2 && mouseY <= swatchY + COLOR_SWATCH_SIZE + 2) {
+                colorPickerOpen = !colorPickerOpen;
+                return true;
+            }
+
+            if (colorPickerOpen) {
+                if (updateColorFromWheel(mouseX, mouseY)) return true;
+                int pickerLeft = colorPickerLeft();
+                int pickerTop = colorPickerTop();
+                if (mouseX >= pickerLeft - 2 && mouseX <= pickerLeft + COLOR_PICKER_SIZE + 2
+                        && mouseY >= pickerTop - 2 && mouseY <= pickerTop + COLOR_PICKER_SIZE + 2) {
+                    return true;
+                }
+                colorPickerOpen = false;
+            }
+
+            int statusLeft = panelLeft + 12;
+            int statusTop = panelTop + panelHeight - 27;
+            int statusRight = panelLeft + panelWidth - 12;
+            int statusBottom = panelTop + panelHeight - 8;
+            if (mouseX >= statusLeft && mouseX <= statusRight
+                    && mouseY >= statusTop && mouseY <= statusBottom) {
+                Minecraft.getInstance().keyboardHandler.setClipboard(currentStatusLine());
+                status = "Copied status message to clipboard.";
+                return true;
+            }
+
             for (DimensionButtonLayout dimensionButton : dimensionButtons) {
                 if (dimensionButton.contains(mouseX, mouseY)) {
                     setDimension(dimensionButton.dimensionId());
