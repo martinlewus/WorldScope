@@ -189,7 +189,6 @@ public final class WorldScopeScanner {
         searchOriginZ = originZ;
         int originY = Math.max(targetLevel.getMinY(),
                 Math.min(targetLevel.getMaxY() - 1, client.player.blockPosition().getY()));
-        long worldSeed = server.getWorldGenSettings().options().seed();
 
         CANCELLED.set(false);
         ACTIVE_HITS.set(List.of());
@@ -206,7 +205,7 @@ public final class WorldScopeScanner {
         } else {
             status = "Preparing structure placement search...";
             server.execute(() -> prepareStructureScan(
-                    client, targetLevel, id, dimensionId, originX, originZ, radius, worldSeed
+                    client, targetLevel, id, dimensionId, originX, originZ, radius
             ));
         }
     }
@@ -405,25 +404,29 @@ public final class WorldScopeScanner {
     }
 
     private static void prepareStructureScan(Minecraft client, ServerLevel level, String wantedId,
-                                             String dimensionId, int originX, int originZ, int radius,
-                                             long worldSeed) {
+                                             String dimensionId, int originX, int originZ, int radius) {
         try {
-            Structure target = findStructure(level, wantedId);
-            if (target == null) {
+            ChunkGeneratorStructureState generatorState =
+                    level.getChunkSource().getGeneratorState();
+
+            Holder<Structure> targetHolder = findStructureHolder(level, wantedId);
+            if (targetHolder == null) {
                 client.execute(() -> finishHits(List.of(),
                         "Structure ID not found in this world's registry: " + wantedId));
                 return;
             }
+            Structure target = targetHolder.value();
 
-            List<StructurePlacement> placements = findPlacements(level, target);
+            // Use the placement list already prepared by this dimension's actual
+            // ChunkGeneratorStructureState. It excludes structure sets that this
+            // generator cannot place and associates the exact placements with the
+            // selected structure, unlike scanning every global registry set.
+            List<StructurePlacement> placements = generatorState.getPlacementsForStructure(targetHolder);
             if (placements.isEmpty()) {
                 client.execute(() -> finishHits(List.of(),
-                        "No structure placement rules were registered for " + wantedId));
+                        "This dimension has no valid placement rules for " + wantedId));
                 return;
             }
-
-            ChunkGeneratorStructureState generatorState =
-                    level.getChunkSource().getGeneratorState();
 
             // Placement-specific enumeration avoids walking every chunk in a huge
             // square. Random-spread structures use their region grid; strongholds
@@ -432,7 +435,7 @@ public final class WorldScopeScanner {
                 try {
                     status = "Finding nearest structure placement candidates...";
                     CandidateSearch search = findCandidates(
-                            placements, generatorState, originX, originZ, radius, worldSeed
+                            placements, generatorState, originX, originZ, radius
                     );
                     client.execute(() -> {
                         if (CANCELLED.get()) {
@@ -484,8 +487,8 @@ public final class WorldScopeScanner {
         if (index >= candidates.size() || found.size() >= MAX_STRUCTURE_RESULTS) {
             String diagnostic = "Minecraft presence checks: " + stats.savedStarts
                     + " saved starts, " + stats.generationRequired + " need generation, "
-                    + stats.rejectedByMinecraft + " rejected, " + stats.presenceErrors
-                    + " check errors, " + stats.loadedWithoutStart
+                    + stats.rejectedByMinecraft + " ruled out by placement/biome checks, "
+                    + stats.presenceErrors + " check errors, " + stats.loadedWithoutStart
                     + " loaded without a valid start.";
             String message;
             if (found.isEmpty()) {
@@ -518,10 +521,10 @@ public final class WorldScopeScanner {
                 return;
             }
 
-            // Ask Minecraft's native structure locator before loading/generating
-            // the candidate chunk. This performs the vanilla persisted-start and
-            // biome/placement checks rather than treating every placement-grid
-            // point as a real structure.
+            // Ask Minecraft's native structure checker before loading/generating
+            // the candidate chunk. Only target-specific, dimension-valid placements
+            // from ChunkGeneratorStructureState reach this step. The checker can
+            // then rule out frequency/biome-invalid candidates or confirm saved data.
             StructureCheckResult presence;
             try {
                 presence = level.structureManager().checkStructurePresence(
@@ -540,8 +543,8 @@ public final class WorldScopeScanner {
             if (presence == StructureCheckResult.START_NOT_PRESENT) {
                 stats.rejectedByMinecraft++;
                 completed = index + 1;
-                status = "Minecraft rejected " + stats.rejectedByMinecraft
-                        + " impossible placement candidates...";
+                status = "Minecraft ruled out " + stats.rejectedByMinecraft
+                        + " candidate position(s) that could not contain this structure...";
                 checkCandidateChunks(
                         client, level, target, wantedId, dimensionId,
                         candidates, index + 1, originX, originZ,
@@ -611,29 +614,15 @@ public final class WorldScopeScanner {
         return List.copyOf(boxes);
     }
 
-    private static Structure findStructure(ServerLevel level, String wantedId) {
+    private static Holder<Structure> findStructureHolder(ServerLevel level, String wantedId) {
         Identifier identifier = Identifier.parse(wantedId);
         var registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-        for (var holder : registry.listElements().toList()) {
+        for (Holder<Structure> holder : registry.listElements().toList()) {
             if (holder.unwrapKey().map(key -> key.identifier().equals(identifier)).orElse(false)) {
-                return holder.value();
+                return holder;
             }
         }
         return null;
-    }
-
-    private static List<StructurePlacement> findPlacements(ServerLevel level, Structure target) {
-        List<StructurePlacement> placements = new ArrayList<>();
-        var sets = level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET);
-        for (var holder : sets.listElements().toList()) {
-            StructureSet set = holder.value();
-            boolean contains = set.structures().stream()
-                    .anyMatch(entry -> entry.structure().value() == target);
-            if (contains && !placements.contains(set.placement())) {
-                placements.add(set.placement());
-            }
-        }
-        return placements;
     }
 
     private static CandidateSearch findCandidates(
@@ -641,8 +630,7 @@ public final class WorldScopeScanner {
             ChunkGeneratorStructureState state,
             int originX,
             int originZ,
-            int radius,
-            long worldSeed
+            int radius
     ) {
         Map<CandidateKey, ChunkCandidate> unique = new HashMap<>();
         boolean budgetReached = false;
@@ -652,7 +640,7 @@ public final class WorldScopeScanner {
             if (CANCELLED.get()) break;
             if (placement instanceof RandomSpreadStructurePlacement randomSpread) {
                 CandidateSlice slice = findRandomSpreadCandidates(
-                        randomSpread, state, originX, originZ, radius, worldSeed
+                        randomSpread, state, originX, originZ, radius
                 );
                 budgetReached |= slice.budgetReached();
                 for (ChunkCandidate candidate : slice.candidates()) {
@@ -710,8 +698,7 @@ public final class WorldScopeScanner {
             ChunkGeneratorStructureState state,
             int originX,
             int originZ,
-            int radius,
-            long worldSeed
+            int radius
     ) {
         int spacing = placement.spacing();
         int originChunkX = Math.floorDiv(originX, 16);
@@ -750,7 +737,7 @@ public final class WorldScopeScanner {
             }
 
             ChunkPos potential = placement.getPotentialStructureChunk(
-                    worldSeed, node.regionX(), node.regionZ()
+                    state.getLevelSeed(), node.regionX(), node.regionZ()
             );
             if (placement.isStructureChunk(state, potential.x(), potential.z())) {
                 ChunkCandidate candidate = makeCandidate(
