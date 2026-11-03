@@ -61,7 +61,8 @@ public final class WorldScopeWorldRenderer {
         Minecraft client = Minecraft.getInstance();
         WorldScopeResult result = WorldScopeScanner.getActiveResult();
 
-        if (!WorldScopeClient.isEspEnabled() || client.level == null || result == null) {
+        if (!WorldScopeClient.isEspEnabled() || client.level == null
+                || client.getSingleplayerServer() == null || result == null) {
             boxState = null;
             return;
         }
