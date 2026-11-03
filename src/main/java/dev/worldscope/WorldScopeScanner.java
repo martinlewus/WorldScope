@@ -3,11 +3,12 @@ package dev.worldscope;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -20,20 +21,28 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
+import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
+import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
 
 public final class WorldScopeScanner {
-    private static final int HARD_MAX_RADIUS = 10_000;
-    private static final int MAX_STRUCTURE_CANDIDATES = 1024;
+    private static final int HARD_MAX_RADIUS = 10_000_000;
+    private static final int MAX_STRUCTURE_CANDIDATES = 256;
+    private static final int MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT = 128;
+    private static final int MAX_STRUCTURE_RESULTS = 32;
+    private static final int MAX_PLACEMENT_REGION_TESTS = 1_000_000;
     private static final int MAX_BIOME_SAMPLES = 750_000;
-    private static final int VERTICAL_BIOME_SAMPLE_STEP = 8;
+    private static final int MAX_BIOME_RESULTS = 16;
     private static final int MAX_BIOME_REGION_CELLS = 512;
-    private static final int BIOME_SAMPLE_STEP = 48;
+    private static final int VERTICAL_BIOME_SAMPLE_STEP = 8;
+    private static final int MIN_BIOME_RESULT_DISTANCE = 1024;
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "WorldScope-Scanner");
@@ -42,12 +51,14 @@ public final class WorldScopeScanner {
     });
 
     private static final AtomicBoolean CANCELLED = new AtomicBoolean(false);
-    private static final AtomicReference<WorldScopeResult> ACTIVE_RESULT = new AtomicReference<>();
-    private static final AtomicReference<List<WorldScopeBiomeCell>> ACTIVE_BIOME_CELLS = new AtomicReference<>(List.of());
+    private static final AtomicReference<List<WorldScopeHit>> ACTIVE_HITS =
+            new AtomicReference<>(List.of());
+    private static final AtomicInteger ACTIVE_RESULT_INDEX = new AtomicInteger();
     private static volatile boolean running;
     private static volatile String status = "Ready.";
     private static volatile int completed;
     private static volatile int total;
+    private static volatile int shapeDetail = 1;
 
     private WorldScopeScanner() {
     }
@@ -67,16 +78,71 @@ public final class WorldScopeScanner {
     }
 
     public static WorldScopeResult getActiveResult() {
-        return ACTIVE_RESULT.get();
+        List<WorldScopeHit> hits = ACTIVE_HITS.get();
+        if (hits.isEmpty()) return null;
+        int index = Math.max(0, Math.min(ACTIVE_RESULT_INDEX.get(), hits.size() - 1));
+        return hits.get(index).result();
     }
 
     public static List<WorldScopeBiomeCell> getActiveBiomeCells() {
-        return ACTIVE_BIOME_CELLS.get();
+        List<WorldScopeHit> hits = ACTIVE_HITS.get();
+        if (hits.isEmpty()) return List.of();
+        int index = Math.max(0, Math.min(ACTIVE_RESULT_INDEX.get(), hits.size() - 1));
+        return hits.get(index).biomeCells();
+    }
+
+    public static List<WorldScopeBox> getActiveStructureBoxes() {
+        List<WorldScopeHit> hits = ACTIVE_HITS.get();
+        if (hits.isEmpty()) return List.of();
+        int index = Math.max(0, Math.min(ACTIVE_RESULT_INDEX.get(), hits.size() - 1));
+        return hits.get(index).structureBoxes();
+    }
+
+    public static int getResultCount() {
+        return ACTIVE_HITS.get().size();
+    }
+
+    public static int getSelectedResultNumber() {
+        return ACTIVE_HITS.get().isEmpty() ? 0 : ACTIVE_RESULT_INDEX.get() + 1;
+    }
+
+    public static void nextResult() {
+        int count = getResultCount();
+        if (count <= 1) return;
+        ACTIVE_RESULT_INDEX.updateAndGet(index -> (index + 1) % count);
+        status = "Showing result " + getSelectedResultNumber() + " of " + count + ".";
+    }
+
+    public static void previousResult() {
+        int count = getResultCount();
+        if (count <= 1) return;
+        ACTIVE_RESULT_INDEX.updateAndGet(index -> (index - 1 + count) % count);
+        status = "Showing result " + getSelectedResultNumber() + " of " + count + ".";
+    }
+
+    public static int getShapeDetail() {
+        return shapeDetail;
+    }
+
+    public static void setShapeDetail(int detail) {
+        shapeDetail = Math.max(1, Math.min(8, detail));
+    }
+
+    private static int biomeSampleStep(int detail) {
+        return switch (Math.max(1, Math.min(8, detail))) {
+            case 1 -> 48;
+            case 2 -> 32;
+            case 3 -> 24;
+            case 4 -> 16;
+            case 5 -> 12;
+            case 6 -> 8;
+            default -> 4;
+        };
     }
 
     public static void clearResult() {
-        ACTIVE_RESULT.set(null);
-        ACTIVE_BIOME_CELLS.set(List.of());
+        ACTIVE_HITS.set(List.of());
+        ACTIVE_RESULT_INDEX.set(0);
         status = "Result cleared.";
     }
 
@@ -116,36 +182,28 @@ public final class WorldScopeScanner {
         double[] center = getSearchCenter(client, dimension);
         int originX = (int) Math.floor(center[0]);
         int originZ = (int) Math.floor(center[1]);
-        int originY = Math.max(targetLevel.getMinY(), Math.min(targetLevel.getMaxY() - 1, client.player.blockPosition().getY()));
+        int originY = Math.max(targetLevel.getMinY(),
+                Math.min(targetLevel.getMaxY() - 1, client.player.blockPosition().getY()));
         long worldSeed = server.getWorldGenSettings().options().seed();
 
         CANCELLED.set(false);
-        ACTIVE_RESULT.set(null);
-        ACTIVE_BIOME_CELLS.set(List.of());
+        ACTIVE_HITS.set(List.of());
+        ACTIVE_RESULT_INDEX.set(0);
         running = true;
         completed = 0;
         total = 0;
-        status = "Checking saved scan cache...";
 
-        WORKER.execute(() -> {
-            WorldScopeResult cached = WorldScopeCache.load(worldSeed, dimensionId, type, id);
-            if (cached != null && isInsideRadius(cached, originX, originZ, radius)) {
-                if ("biome".equals(type)) {
-                    ACTIVE_BIOME_CELLS.set(traceBiomeRegion(
-                            targetLevel, id, cached.centerX(), cached.centerZ(),
-                            originX, originZ, cached.centerY(), radius
-                    ));
-                }
-                client.execute(() -> finish(cached, "Loaded saved location."));
-                return;
-            }
-
-            if ("biome".equals(type)) {
-                scanBiome(targetLevel, id, dimensionId, originX, originY, originZ, radius);
-            } else {
-                server.execute(() -> prepareStructureScan(client, targetLevel, id, dimensionId, originX, originZ, radius));
-            }
-        });
+        if ("biome".equals(type)) {
+            status = "Scanning biome samples at detail " + shapeDetail + "...";
+            WORKER.execute(() -> scanBiome(
+                    targetLevel, id, dimensionId, originX, originY, originZ, radius
+            ));
+        } else {
+            status = "Preparing structure placement search...";
+            server.execute(() -> prepareStructureScan(
+                    client, targetLevel, id, dimensionId, originX, originZ, radius, worldSeed
+            ));
+        }
     }
 
     private static ResourceKey<Level> parseDimension(String id) {
@@ -163,32 +221,31 @@ public final class WorldScopeScanner {
         ResourceKey<Level> current = client.level.dimension();
 
         if (current.equals(targetDimension)) return new double[]{x, z};
-        if (current.equals(Level.OVERWORLD) && targetDimension.equals(Level.NETHER)) return new double[]{x / 8.0, z / 8.0};
-        if (current.equals(Level.NETHER) && targetDimension.equals(Level.OVERWORLD)) return new double[]{x * 8.0, z * 8.0};
-
+        if (current.equals(Level.OVERWORLD) && targetDimension.equals(Level.NETHER)) {
+            return new double[]{x / 8.0, z / 8.0};
+        }
+        if (current.equals(Level.NETHER) && targetDimension.equals(Level.OVERWORLD)) {
+            return new double[]{x * 8.0, z * 8.0};
+        }
         return new double[]{0.0, 0.0};
-    }
-
-    private static boolean isInsideRadius(WorldScopeResult result, int originX, int originZ, int radius) {
-        double dx = Math.max(Math.max(result.minX() - originX, 0.0), originX - (result.maxX() + 1.0));
-        double dz = Math.max(Math.max(result.minZ() - originZ, 0.0), originZ - (result.maxZ() + 1.0));
-        return dx * dx + dz * dz <= (double) radius * radius;
     }
 
     private static void scanBiome(ServerLevel level, String wantedId, String dimensionId,
                                   int originX, int originY, int originZ, int radius) {
-        final int sampleStep = BIOME_SAMPLE_STEP;
+        final int sampleStep = biomeSampleStep(shapeDetail);
         final long radiusSquared = (long) radius * radius;
         final int[] verticalSamples = buildBiomeHeightSamples(
                 level.getMinY(), level.getMaxY() - 1, originY
         );
+        final Set<Long> coveredCells = new HashSet<>();
+        final List<WorldScopeHit> found = new ArrayList<>();
+        final List<BiomeSeed> resultSeeds = new ArrayList<>();
         AtomicInteger samples = new AtomicInteger();
-        WorldScopeResult firstMatch = null;
         boolean sampleLimitReached = false;
 
-        // Search outward horizontally, but sample the full build-height range at
-        // each horizontal point. This allows underground biomes such as Deep Dark
-        // to be found even when the player is standing at the surface.
+        // Rings are visited from the player's position outward. A biome result is
+        // recorded once per distinct sampled patch, then its traced cells are marked
+        // so the next navigation result does not simply point into the same patch.
         outer:
         for (int ring = 0; ring <= radius; ring += sampleStep) {
             if (CANCELLED.get()) break;
@@ -207,64 +264,80 @@ public final class WorldScopeScanner {
                             break outer;
                         }
 
+                        long sampleKey = gridKey(x, z);
+                        if (coveredCells.contains(sampleKey)) continue;
+
+                        boolean tooCloseToExisting = resultSeeds.stream().anyMatch(seed -> {
+                            long sx = (long) seed.x() - x;
+                            long sz = (long) seed.z() - z;
+                            return sx * sx + sz * sz
+                                    < (long) MIN_BIOME_RESULT_DISTANCE * MIN_BIOME_RESULT_DISTANCE;
+                        });
+                        if (tooCloseToExisting) continue;
+
                         Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, sampleY >> 2, z >> 2);
                         String actualId = biome.unwrapKey()
                                 .map(key -> key.identifier().toString()).orElse("");
                         completed = checked;
                         total = MAX_BIOME_SAMPLES;
+                        if (!wantedId.equals(actualId)) continue;
 
-                        if (wantedId.equals(actualId)) {
-                            // A biome lookup addresses a 4x4x4 quart cell.
-                            // Use that cell's actual block-height interval and center
-                            // instead of expanding the ESP by an arbitrary sample step.
-                            int biomeMinY = (sampleY >> 2) << 2;
-                            int biomeMaxY = Math.min(level.getMaxY() - 1, biomeMinY + 3);
-                            firstMatch = new WorldScopeResult(
-                                    "biome", wantedId, dimensionId,
-                                    x - sampleStep / 2, Math.max(level.getMinY(), biomeMinY),
-                                    z - sampleStep / 2,
-                                    x + sampleStep / 2, biomeMaxY,
-                                    z + sampleStep / 2
-                            );
-                            break outer;
+                        int biomeMinY = (sampleY >> 2) << 2;
+                        int biomeMaxY = Math.min(level.getMaxY() - 1, biomeMinY + 3);
+                        List<WorldScopeBiomeCell> cells = traceBiomeRegion(
+                                level, wantedId, x, z, originX, originZ,
+                                sampleY, radius, sampleStep
+                        );
+                        if (cells.isEmpty()) {
+                            cells = List.of(new WorldScopeBiomeCell(
+                                    x - sampleStep / 2, z - sampleStep / 2,
+                                    x + sampleStep / 2, z + sampleStep / 2, sampleY
+                            ));
                         }
+
+                        for (WorldScopeBiomeCell cell : cells) {
+                            coveredCells.add(gridKey(
+                                    cell.minX() + (cell.maxX() - cell.minX()) / 2,
+                                    cell.minZ() + (cell.maxZ() - cell.minZ()) / 2
+                            ));
+                        }
+
+                        int minX = cells.stream().mapToInt(WorldScopeBiomeCell::minX).min().orElse(x - sampleStep / 2);
+                        int minZ = cells.stream().mapToInt(WorldScopeBiomeCell::minZ).min().orElse(z - sampleStep / 2);
+                        int maxX = cells.stream().mapToInt(WorldScopeBiomeCell::maxX).max().orElse(x + sampleStep / 2);
+                        int maxZ = cells.stream().mapToInt(WorldScopeBiomeCell::maxZ).max().orElse(z + sampleStep / 2);
+
+                        WorldScopeResult result = new WorldScopeResult(
+                                "biome", wantedId, dimensionId,
+                                minX, biomeMinY, minZ,
+                                maxX, biomeMaxY, maxZ
+                        );
+                        found.add(new WorldScopeHit(result, List.of(), cells));
+                        resultSeeds.add(new BiomeSeed(x, z));
+
+                        if (found.size() >= MAX_BIOME_RESULTS) break outer;
+                        status = "Found " + found.size() + " biome region(s); continuing outward...";
                     }
                 }
             }
         }
 
-        if (CANCELLED.get() || firstMatch == null) {
-            String message = CANCELLED.get()
-                    ? "Scan cancelled."
-                    : sampleLimitReached
-                        ? "Biome not found before the scan safety limit. Try a smaller radius."
-                        : "Biome not found in the selected radius at any sampled height.";
-            Minecraft.getInstance().execute(() -> {
-                ACTIVE_BIOME_CELLS.set(List.of());
-                finish(null, message);
-            });
+        if (CANCELLED.get()) {
+            Minecraft.getInstance().execute(() -> finishHits(found, "Biome scan cancelled."));
+            return;
+        }
+        if (found.isEmpty()) {
+            String message = sampleLimitReached
+                    ? "Biome not found before the sample budget was reached. Try a smaller radius or lower shape detail."
+                    : "Biome not found in the selected radius at any sampled height.";
+            Minecraft.getInstance().execute(() -> finishHits(List.of(), message));
             return;
         }
 
-        status = "Tracing sampled biome border...";
-        int matchedY = firstMatch.minY() + 2;
-        List<WorldScopeBiomeCell> cells = traceBiomeRegion(
-                level, wantedId, firstMatch.centerX(), firstMatch.centerZ(),
-                originX, originZ, matchedY, radius
-        );
-        ACTIVE_BIOME_CELLS.set(cells);
-
-        int minX = cells.stream().mapToInt(WorldScopeBiomeCell::minX).min().orElse(firstMatch.minX());
-        int minZ = cells.stream().mapToInt(WorldScopeBiomeCell::minZ).min().orElse(firstMatch.minZ());
-        int maxX = cells.stream().mapToInt(WorldScopeBiomeCell::maxX).max().orElse(firstMatch.maxX());
-        int maxZ = cells.stream().mapToInt(WorldScopeBiomeCell::maxZ).max().orElse(firstMatch.maxZ());
-
-        WorldScopeResult result = new WorldScopeResult(
-                "biome", wantedId, dimensionId,
-                minX, firstMatch.minY(), minZ,
-                maxX, firstMatch.maxY(), maxZ
-        );
-        Minecraft.getInstance().execute(() -> finish(result, "Biome region found across build height; sampled border ready."));
+        String message = sampleLimitReached
+                ? "Biome sample budget reached; showing the nearest regions found in the covered area."
+                : "Biome scan complete; showing the nearest sampled regions.";
+        Minecraft.getInstance().execute(() -> finishHits(found, message));
     }
 
     private static int[] buildBiomeHeightSamples(int minY, int maxY, int preferredY) {
@@ -290,7 +363,8 @@ public final class WorldScopeScanner {
             int originX,
             int originZ,
             int sampleY,
-            int radius
+            int radius,
+            int sampleStep
     ) {
         ArrayList<WorldScopeBiomeCell> cells = new ArrayList<>();
         ArrayDeque<BiomeGridPoint> queue = new ArrayDeque<>();
@@ -305,76 +379,90 @@ public final class WorldScopeScanner {
             long dz = (long) point.z() - originZ;
             if (dx * dx + dz * dz > radiusSquared) continue;
 
-            long key = (((long) point.x()) << 32) ^ (point.z() & 0xffffffffL);
+            long key = gridKey(point.x(), point.z());
             if (!visited.add(key)) continue;
 
             Holder<?> biome = level.getUncachedNoiseBiome(point.x() >> 2, quartY, point.z() >> 2);
-            String actualId = biome.unwrapKey().map(resourceKey -> resourceKey.identifier().toString()).orElse("");
+            String actualId = biome.unwrapKey()
+                    .map(resourceKey -> resourceKey.identifier().toString()).orElse("");
             completed++;
             if (!wantedId.equals(actualId)) continue;
 
-            int half = BIOME_SAMPLE_STEP / 2;
+            int half = sampleStep / 2;
             cells.add(new WorldScopeBiomeCell(
                     point.x() - half, point.z() - half,
                     point.x() + half, point.z() + half,
                     sampleY
             ));
 
-            queue.addLast(new BiomeGridPoint(point.x() - BIOME_SAMPLE_STEP, point.z()));
-            queue.addLast(new BiomeGridPoint(point.x() + BIOME_SAMPLE_STEP, point.z()));
-            queue.addLast(new BiomeGridPoint(point.x(), point.z() - BIOME_SAMPLE_STEP));
-            queue.addLast(new BiomeGridPoint(point.x(), point.z() + BIOME_SAMPLE_STEP));
+            queue.addLast(new BiomeGridPoint(point.x() - sampleStep, point.z()));
+            queue.addLast(new BiomeGridPoint(point.x() + sampleStep, point.z()));
+            queue.addLast(new BiomeGridPoint(point.x(), point.z() - sampleStep));
+            queue.addLast(new BiomeGridPoint(point.x(), point.z() + sampleStep));
         }
 
         return List.copyOf(cells);
     }
 
+    private static long gridKey(int x, int z) {
+        return (((long) x) << 32) ^ (z & 0xffffffffL);
+    }
+
     private static void prepareStructureScan(Minecraft client, ServerLevel level, String wantedId,
-                                             String dimensionId, int originX, int originZ, int radius) {
+                                             String dimensionId, int originX, int originZ, int radius,
+                                             long worldSeed) {
         try {
             Structure target = findStructure(level, wantedId);
             if (target == null) {
-                client.execute(() -> finish(null, "Structure ID not found in this world's registry: " + wantedId));
+                client.execute(() -> finishHits(List.of(),
+                        "Structure ID not found in this world's registry: " + wantedId));
                 return;
             }
 
             List<StructurePlacement> placements = findPlacements(level, target);
             if (placements.isEmpty()) {
-                client.execute(() -> finish(null, "No structure placement rules were registered for " + wantedId));
+                client.execute(() -> finishHits(List.of(),
+                        "No structure placement rules were registered for " + wantedId));
                 return;
             }
 
-            Object generatorState = level.getChunkSource().getGeneratorState();
+            ChunkGeneratorStructureState generatorState =
+                    level.getChunkSource().getGeneratorState();
 
-            // Candidate enumeration may cover more than a million chunk coordinates
-            // at the maximum radius. Keep that CPU work off the integrated-server tick.
+            // Placement-specific enumeration avoids walking every chunk in a huge
+            // square. Random-spread structures use their region grid; strongholds
+            // use the generator's precomputed concentric-ring positions.
             WORKER.execute(() -> {
                 try {
-                    List<ChunkCandidate> candidates = findCandidates(
-                            placements, generatorState, originX, originZ, radius
+                    status = "Finding nearest structure placement candidates...";
+                    CandidateSearch search = findCandidates(
+                            placements, generatorState, originX, originZ, radius, worldSeed
                     );
                     client.execute(() -> {
                         if (CANCELLED.get()) {
-                            running = false;
-                            status = "Scan cancelled.";
-                        } else if (candidates.isEmpty()) {
-                            finish(null, "No candidate chunks for " + wantedId + " were found in that radius.");
+                            finishHits(List.of(), "Structure scan cancelled.");
+                        } else if (search.candidates().isEmpty()) {
+                            finishHits(List.of(), "No structure placement candidates were found inside that distance.");
                         } else {
-                            total = candidates.size();
+                            total = search.candidates().size();
                             completed = 0;
-                            status = "Checking candidate chunks...";
-                            checkCandidateChunks(client, level, target, wantedId, dimensionId,
-                                    candidates, 0, new AtomicInteger());
+                            status = "Checking nearest candidate structures...";
+                            checkCandidateChunks(
+                                    client, level, target, wantedId, dimensionId,
+                                    search.candidates(), 0, originX, originZ,
+                                    new ArrayList<>(), search.budgetReached()
+                            );
                         }
                     });
                 } catch (Throwable error) {
-                    client.execute(() -> finish(null,
+                    client.execute(() -> finishHits(List.of(),
                             "Candidate search failed: " + error.getClass().getSimpleName()
                                     + ": " + error.getMessage()));
                 }
             });
         } catch (Throwable error) {
-            client.execute(() -> finish(null, "Scan error: " + error.getClass().getSimpleName() + ": " + error.getMessage()));
+            client.execute(() -> finishHits(List.of(),
+                    "Scan error: " + error.getClass().getSimpleName() + ": " + error.getMessage()));
         }
     }
 
@@ -386,31 +474,40 @@ public final class WorldScopeScanner {
             String dimensionId,
             List<ChunkCandidate> candidates,
             int index,
-            AtomicInteger checked
+            int originX,
+            int originZ,
+            List<WorldScopeHit> found,
+            boolean placementBudgetReached
     ) {
         if (CANCELLED.get()) {
-            running = false;
-            status = "Scan cancelled.";
+            finishHits(found, "Structure scan cancelled.");
             return;
         }
 
-        if (index >= candidates.size()) {
-            finish(null, "Checked " + candidates.size() + " candidate chunks; no generated start for " + wantedId + " was found in the selected radius.");
+        if (index >= candidates.size() || found.size() >= MAX_STRUCTURE_RESULTS) {
+            String message;
+            if (found.isEmpty()) {
+                message = "No generated starts were found among the " + candidates.size()
+                        + " nearest placement candidates.";
+            } else if (placementBudgetReached) {
+                message = "Found " + found.size() + " results; placement search reached its workload limit.";
+            } else {
+                message = "Found " + found.size() + " nearest structure result(s).";
+            }
+            finishHits(found, message);
             return;
         }
 
         var server = client.getSingleplayerServer();
         if (server == null) {
-            running = false;
-            status = "Integrated server stopped.";
+            finishHits(found, "Integrated server stopped.");
             return;
         }
 
         ChunkCandidate candidate = candidates.get(index);
         server.execute(() -> {
             if (CANCELLED.get()) {
-                running = false;
-                status = "Scan cancelled.";
+                finishHits(found, "Structure scan cancelled.");
                 return;
             }
 
@@ -418,7 +515,7 @@ public final class WorldScopeScanner {
                     .getChunkFuture(candidate.x(), candidate.z(), ChunkStatus.STRUCTURE_STARTS, true)
                     .whenComplete((chunkResult, error) -> server.execute(() -> {
                         if (error != null) {
-                            finish(null, "Chunk scan failed: " + error.getClass().getSimpleName());
+                            finishHits(found, "Chunk scan failed: " + error.getClass().getSimpleName());
                             return;
                         }
 
@@ -433,18 +530,37 @@ public final class WorldScopeScanner {
                                             box.minX(), box.minY(), box.minZ(),
                                             box.maxX(), box.maxY(), box.maxZ()
                                     );
-                                    client.execute(() -> finish(result, "Structure found."));
-                                    return;
+                                    List<WorldScopeBox> pieces = extractPieceBounds(start);
+                                    found.add(new WorldScopeHit(result, pieces, List.of()));
                                 }
                             }
                         }
 
-                        completed = checked.incrementAndGet();
-                        status = "Checking candidate chunks...";
-                        checkCandidateChunks(client, level, target, wantedId, dimensionId,
-                                candidates, index + 1, checked);
+                        completed = index + 1;
+                        status = "Checking nearest candidate structures...";
+                        checkCandidateChunks(
+                                client, level, target, wantedId, dimensionId,
+                                candidates, index + 1, originX, originZ,
+                                found, placementBudgetReached
+                        );
                     }));
         });
+    }
+
+    private static List<WorldScopeBox> extractPieceBounds(StructureStart start) {
+        ArrayList<WorldScopeBox> boxes = new ArrayList<>();
+        for (var piece : start.getPieces()) {
+            var box = piece.getBoundingBox();
+            boxes.add(new WorldScopeBox(
+                    box.minX(), box.minY(), box.minZ(),
+                    box.maxX(), box.maxY(), box.maxZ()
+            ));
+        }
+        boxes.sort(Comparator.comparingLong(WorldScopeBox::volume).reversed());
+        if (boxes.size() > 512) {
+            return List.copyOf(boxes.subList(0, 512));
+        }
+        return List.copyOf(boxes);
     }
 
     private static Structure findStructure(ServerLevel level, String wantedId) {
@@ -463,7 +579,8 @@ public final class WorldScopeScanner {
         var sets = level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET);
         for (var holder : sets.listElements().toList()) {
             StructureSet set = holder.value();
-            boolean contains = set.structures().stream().anyMatch(entry -> entry.structure().value() == target);
+            boolean contains = set.structures().stream()
+                    .anyMatch(entry -> entry.structure().value() == target);
             if (contains && !placements.contains(set.placement())) {
                 placements.add(set.placement());
             }
@@ -471,67 +588,230 @@ public final class WorldScopeScanner {
         return placements;
     }
 
-    private static List<ChunkCandidate> findCandidates(List<StructurePlacement> placements, Object stateObject,
-                                                       int originX, int originZ, int radius) {
-        @SuppressWarnings("unchecked")
-        var state = (net.minecraft.world.level.chunk.ChunkGeneratorStructureState) stateObject;
-
-        int chunkRadius = (radius + 15) >> 4;
+    private static CandidateSearch findCandidates(
+            List<StructurePlacement> placements,
+            ChunkGeneratorStructureState state,
+            int originX,
+            int originZ,
+            int radius,
+            long worldSeed
+    ) {
+        Map<Long, ChunkCandidate> unique = new HashMap<>();
+        boolean budgetReached = false;
         long radiusSquared = (long) radius * radius;
-        Comparator<ChunkCandidate> nearestFirst = Comparator.comparingLong(ChunkCandidate::distanceSquared);
-        PriorityQueue<ChunkCandidate> nearest = new PriorityQueue<>(MAX_STRUCTURE_CANDIDATES, nearestFirst.reversed());
-        Set<Long> seen = new HashSet<>();
 
-        int originChunkX = Math.floorDiv(originX, 16);
-        int originChunkZ = Math.floorDiv(originZ, 16);
-
-        for (int dx = -chunkRadius; dx <= chunkRadius && !CANCELLED.get(); dx++) {
-            for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
-                int blockDx = dx * 16;
-                int blockDz = dz * 16;
-                long distanceSquared = (long) blockDx * blockDx + (long) blockDz * blockDz;
-                if (distanceSquared > radiusSquared) continue;
-
-                int chunkX = originChunkX + dx;
-                int chunkZ = originChunkZ + dz;
-                boolean candidate = placements.stream().anyMatch(placement ->
-                        placement.isStructureChunk(state, chunkX, chunkZ));
-                if (!candidate) continue;
-
-                long key = (((long) chunkX) << 32) ^ (chunkZ & 0xffffffffL);
-                if (!seen.add(key)) continue;
-
-                ChunkCandidate entry = new ChunkCandidate(chunkX, chunkZ, distanceSquared);
-                if (nearest.size() < MAX_STRUCTURE_CANDIDATES) {
-                    nearest.add(entry);
-                } else if (nearestFirst.compare(entry, nearest.peek()) < 0) {
-                    nearest.poll();
-                    nearest.add(entry);
+        for (StructurePlacement placement : placements) {
+            if (CANCELLED.get()) break;
+            if (placement instanceof RandomSpreadStructurePlacement randomSpread) {
+                CandidateSlice slice = findRandomSpreadCandidates(
+                        randomSpread, state, originX, originZ, radius, worldSeed
+                );
+                budgetReached |= slice.budgetReached();
+                for (ChunkCandidate candidate : slice.candidates()) {
+                    long key = chunkKey(candidate.x(), candidate.z());
+                    unique.merge(key, candidate, (a, b) ->
+                            a.distanceSquared() <= b.distanceSquared() ? a : b);
+                }
+            } else if (placement instanceof ConcentricRingsStructurePlacement rings) {
+                state.ensureStructuresGenerated();
+                List<ChunkPos> ringPositions = state.getRingPositionsFor(rings);
+                if (ringPositions != null) {
+                    for (ChunkPos pos : ringPositions) {
+                        if (!placement.isStructureChunk(state, pos.x(), pos.z())) continue;
+                        ChunkCandidate candidate = makeCandidate(
+                                placement, pos, originX, originZ, radiusSquared
+                        );
+                        if (candidate != null) {
+                            unique.put(chunkKey(candidate.x(), candidate.z()), candidate);
+                        }
+                    }
+                }
+            } else {
+                // The dimension-origin placement is a single explicit candidate.
+                int chunkX = Math.floorDiv(originX, 16);
+                int chunkZ = Math.floorDiv(originZ, 16);
+                if (placement.isStructureChunk(state, chunkX, chunkZ)) {
+                    ChunkCandidate candidate = new ChunkCandidate(
+                            chunkX, chunkZ,
+                            squaredDistance((long) chunkX * 16 + 8 - originX,
+                                    (long) chunkZ * 16 + 8 - originZ)
+                    );
+                    if (candidate.distanceSquared() <= radiusSquared) {
+                        unique.put(chunkKey(chunkX, chunkZ), candidate);
+                    }
                 }
             }
         }
 
-        List<ChunkCandidate> result = new ArrayList<>(nearest);
-        result.sort(nearestFirst);
-        return result;
+        ArrayList<ChunkCandidate> result = new ArrayList<>(unique.values());
+        result.sort(Comparator.comparingLong(ChunkCandidate::distanceSquared));
+        if (result.size() > MAX_STRUCTURE_CANDIDATES) {
+            result.subList(MAX_STRUCTURE_CANDIDATES, result.size()).clear();
+        }
+        return new CandidateSearch(List.copyOf(result), budgetReached);
+    }
+
+    private static CandidateSlice findRandomSpreadCandidates(
+            RandomSpreadStructurePlacement placement,
+            ChunkGeneratorStructureState state,
+            int originX,
+            int originZ,
+            int radius,
+            long worldSeed
+    ) {
+        int spacing = placement.spacing();
+        int originChunkX = Math.floorDiv(originX, 16);
+        int originChunkZ = Math.floorDiv(originZ, 16);
+        int originRegionX = Math.floorDiv(originChunkX, spacing);
+        int originRegionZ = Math.floorDiv(originChunkZ, spacing);
+        long radiusSquared = (long) radius * radius;
+
+        PriorityQueue<RegionNode> frontier = new PriorityQueue<>(
+                Comparator.comparingLong(RegionNode::minimumDistanceSquared)
+        );
+        Set<Long> visited = new HashSet<>();
+        enqueueRegion(frontier, visited, originRegionX, originRegionZ,
+                spacing, originX, originZ, radiusSquared);
+
+        ArrayList<ChunkCandidate> candidates = new ArrayList<>();
+        int tests = 0;
+        boolean budgetReached = false;
+
+        while (!frontier.isEmpty() && !CANCELLED.get()) {
+            RegionNode node = frontier.poll();
+            if (node.minimumDistanceSquared() > radiusSquared) break;
+
+            if (candidates.size() >= MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT) {
+                long farthest = candidates.stream()
+                        .mapToLong(ChunkCandidate::distanceSquared).max().orElse(Long.MAX_VALUE);
+                if (node.minimumDistanceSquared() > farthest) break;
+            }
+
+            if (++tests > MAX_PLACEMENT_REGION_TESTS) {
+                budgetReached = true;
+                break;
+            }
+
+            ChunkPos potential = placement.getPotentialStructureChunk(
+                    worldSeed, node.regionX(), node.regionZ()
+            );
+            if (placement.isStructureChunk(state, potential.x(), potential.z())) {
+                ChunkCandidate candidate = makeCandidate(
+                        placement, potential, originX, originZ, radiusSquared
+                );
+                if (candidate != null) candidates.add(candidate);
+            }
+
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (dx == 0 && dz == 0) continue;
+                    enqueueRegion(frontier, visited,
+                            node.regionX() + dx, node.regionZ() + dz,
+                            spacing, originX, originZ, radiusSquared);
+                }
+            }
+        }
+
+        candidates.sort(Comparator.comparingLong(ChunkCandidate::distanceSquared));
+        if (candidates.size() > MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT) {
+            candidates.subList(MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT, candidates.size()).clear();
+        }
+        return new CandidateSlice(List.copyOf(candidates), budgetReached);
+    }
+
+    private static void enqueueRegion(
+            PriorityQueue<RegionNode> frontier,
+            Set<Long> visited,
+            int regionX,
+            int regionZ,
+            int spacing,
+            int originX,
+            int originZ,
+            long radiusSquared
+    ) {
+        long key = (((long) regionX) << 32) ^ (regionZ & 0xffffffffL);
+        if (!visited.add(key)) return;
+
+        long width = (long) spacing * 16L;
+        long minX = (long) regionX * width;
+        long minZ = (long) regionZ * width;
+        long maxX = minX + width - 1;
+        long maxZ = minZ + width - 1;
+        long dx = originX < minX ? minX - originX : originX > maxX ? originX - maxX : 0;
+        long dz = originZ < minZ ? minZ - originZ : originZ > maxZ ? originZ - maxZ : 0;
+        long lowerBound = squaredDistance(dx, dz);
+        if (lowerBound <= radiusSquared) {
+            frontier.add(new RegionNode(regionX, regionZ, lowerBound));
+        }
+    }
+
+    private static ChunkCandidate makeCandidate(
+            StructurePlacement placement,
+            ChunkPos pos,
+            int originX,
+            int originZ,
+            long radiusSquared
+    ) {
+        var locate = placement.getLocatePos(pos);
+        long dx = (long) locate.getX() - originX;
+        long dz = (long) locate.getZ() - originZ;
+        long distance = squaredDistance(dx, dz);
+        if (distance > radiusSquared) return null;
+        return new ChunkCandidate(pos.x(), pos.z(), distance);
+    }
+
+    private static long squaredDistance(long dx, long dz) {
+        return dx * dx + dz * dz;
+    }
+
+    private static long chunkKey(int x, int z) {
+        return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
     private static void finish(WorldScopeResult result, String message) {
-        if (result != null) {
-            ACTIVE_RESULT.set(result);
+        if (result == null) {
+            finishHits(List.of(), message);
+        } else {
+            List<WorldScopeBiomeCell> cells = "biome".equals(result.type())
+                    ? getActiveBiomeCells() : List.of();
+            finishHits(List.of(new WorldScopeHit(result, getActiveStructureBoxes(), cells)), message);
+        }
+    }
+
+    private static void finishHits(List<WorldScopeHit> hits, String message) {
+        List<WorldScopeHit> immutableHits = List.copyOf(hits);
+        ACTIVE_HITS.set(immutableHits);
+        ACTIVE_RESULT_INDEX.set(0);
+        running = false;
+
+        if (!immutableHits.isEmpty()) {
+            WorldScopeResult first = immutableHits.get(0).result();
             Minecraft client = Minecraft.getInstance();
             if (client.level != null && client.getSingleplayerServer() != null) {
                 long seed = client.getSingleplayerServer().getWorldGenSettings().options().seed();
-                WORKER.execute(() -> WorldScopeCache.save(seed, result));
+                WORKER.execute(() -> WorldScopeCache.save(seed, first));
             }
+            status = message + " Showing " + immutableHits.size() + " result(s).";
+        } else {
+            status = message;
         }
-        running = false;
-        status = result == null ? message : message + " " + result.id();
     }
 
     private record ChunkCandidate(int x, int z, long distanceSquared) {
     }
 
     private record BiomeGridPoint(int x, int z) {
+    }
+
+    private record BiomeSeed(int x, int z) {
+    }
+
+    private record RegionNode(int regionX, int regionZ, long minimumDistanceSquared) {
+    }
+
+    private record CandidateSlice(List<ChunkCandidate> candidates, boolean budgetReached) {
+    }
+
+    private record CandidateSearch(List<ChunkCandidate> candidates, boolean budgetReached) {
     }
 }
