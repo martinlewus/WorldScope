@@ -99,6 +99,38 @@ public final class WorldScopeUserSettings {
         };
     }
 
+    public static synchronized boolean isTracerEnabled() {
+        load();
+        return Boolean.parseBoolean(VALUES.getProperty("tracerEnabled", "false"));
+    }
+
+    public static synchronized void setTracerEnabled(boolean enabled) {
+        load();
+        VALUES.setProperty("tracerEnabled", Boolean.toString(enabled));
+        save();
+    }
+
+    public static synchronized boolean toggleTracerEnabled() {
+        boolean enabled = !isTracerEnabled();
+        setTracerEnabled(enabled);
+        return enabled;
+    }
+
+    public static synchronized int getBoxColor() {
+        load();
+        try {
+            return Integer.parseUnsignedInt(VALUES.getProperty("boxColor", "08DFFF"), 16) & 0xFFFFFF;
+        } catch (NumberFormatException ignored) {
+            return 0x08DFFF;
+        }
+    }
+
+    public static synchronized void setBoxColor(int rgb) {
+        load();
+        VALUES.setProperty("boxColor", String.format("%06X", rgb & 0xFFFFFF));
+        save();
+    }
+
     public static synchronized String getSelectedTarget(String mode) {
         load();
         return VALUES.getProperty("selectedTarget." + mode, "");
