@@ -5,12 +5,14 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -41,6 +43,8 @@ public final class WorldScopeScreen extends Screen {
     private int infoLeft;
     private int infoRight;
     private boolean compactUi;
+    private int marqueeOffset;
+    private int marqueeTickCounter;
 
     public WorldScopeScreen() {
         super(Component.literal("WorldScope"));
@@ -404,6 +408,69 @@ public final class WorldScopeScreen extends Screen {
         return count == 0 ? "NO RESULTS YET" : "RESULT " + selected + " / " + count;
     }
 
+    private String currentStatusLine() {
+        String scanStatus = WorldScopeScanner.getProgressText();
+        if (!WorldScopeScanner.isRunning() && "Ready.".equals(scanStatus)) {
+            scanStatus = status;
+        }
+        return scanStatus == null ? "" : scanStatus;
+    }
+
+    private String marqueeText(String value, int maxWidth) {
+        if (value == null || value.isEmpty() || maxWidth <= 0) return "";
+        if (font.width(value) <= maxWidth) {
+            marqueeOffset = 0;
+            return value;
+        }
+
+        String cycle = value + "     ";
+        int start = marqueeOffset % cycle.length();
+        StringBuilder visible = new StringBuilder();
+        int cursor = start;
+        while (cursor < start + cycle.length()) {
+            char next = cycle.charAt(cursor % cycle.length());
+            String candidate = visible.toString() + next;
+            if (!visible.isEmpty() && font.width(candidate) > maxWidth) break;
+            if (font.width(candidate) > maxWidth) break;
+            visible.append(next);
+            cursor++;
+        }
+        return visible.toString();
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        String line = currentStatusLine();
+        if (font.width(line) <= Math.max(30, panelWidth - 38)) {
+            marqueeOffset = 0;
+            marqueeTickCounter = 0;
+            return;
+        }
+        if (++marqueeTickCounter >= 2) {
+            marqueeTickCounter = 0;
+            marqueeOffset++;
+            if (marqueeOffset >= line.length() + 5) marqueeOffset = 0;
+        }
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        boolean editingText = (searchBox != null && searchBox.isFocused())
+                || (radiusBox != null && radiusBox.isFocused());
+        if (!editingText) {
+            if (event.key() == InputConstants.KEY_LEFT) {
+                WorldScopeScanner.previousResult();
+                return true;
+            }
+            if (event.key() == InputConstants.KEY_RIGHT) {
+                WorldScopeScanner.nextResult();
+                return true;
+            }
+        }
+        return super.keyPressed(event);
+    }
+
     private String fitText(String value, int maxWidth) {
         if (value == null || value.isEmpty() || maxWidth <= 0) return "";
         if (font.width(value) <= maxWidth) return value;
@@ -518,10 +585,9 @@ public final class WorldScopeScreen extends Screen {
             }
         }
 
-        String scanStatus = WorldScopeScanner.getProgressText();
-        if (!WorldScopeScanner.isRunning() && "Ready.".equals(scanStatus)) scanStatus = status;
+        String scanStatus = currentStatusLine();
         graphics.fill(left + 12, top + h - 27, left + w - 12, top + h - 8, 0xFF333333);
-        graphics.text(font, Component.literal(fitText(scanStatus, w - 38)),
+        graphics.text(font, Component.literal(marqueeText(scanStatus, w - 38)),
                 left + 19, top + h - 21, 0xFFFFFFFF);
 
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
