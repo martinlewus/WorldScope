@@ -631,7 +631,9 @@ public final class WorldScopeScreen extends Screen {
                     selectedId = visible.get(index);
                     WorldScopeUserSettings.setSelectedTarget(mode, selectedId);
                     searchBox.setValue(selectedId);
-                    searchBox.setFocused(true);
+                    // Keep the field unfocused after catalog selection so the
+                    // left/right keys navigate scan results immediately.
+                    searchBox.setFocused(false);
                     status = "Selected " + selectedId + ". Press SCAN to search.";
                     return true;
                 }
