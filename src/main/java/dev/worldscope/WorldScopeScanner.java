@@ -348,7 +348,8 @@ public final class WorldScopeScanner {
         if (regionLimitReached) {
             message += " One or more biome outlines reached the per-region detail limit.";
         }
-        Minecraft.getInstance().execute(() -> finishHits(found, message));
+        String finalMessage = message;
+        Minecraft.getInstance().execute(() -> finishHits(found, finalMessage));
     }
 
     private static int[] buildBiomeHeightSamples(int minY, int maxY, int preferredY) {
