@@ -12,6 +12,12 @@ WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 - Increased the per-region outline limit from 8,192 to 32,768 cells.
 - Increased biome result capacity from 128 to 512. Structure result capacity is also 512.
 
+## Biome volume tracing
+
+- Connected horizontal samples are traced into contiguous biome regions.
+- Every biome cell stores its sampled minimum and maximum Y, producing a 3D volume outline rather than a single-height box.
+- Biome search returns up to 512 regions, with a 2,000,000-sample workload budget.
+
 ## Features
 
 - Browse registered structures and biomes, including modded entries.
