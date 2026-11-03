@@ -80,7 +80,7 @@ public final class WorldScopeWorldRenderer {
                 ? List.of() : WorldScopeScanner.getActiveStructureBoxes();
         boxState = new BoxState(
                 result.minX(), result.minY(), result.minZ(),
-                result.maxX() + 1, result.maxY() + 1, result.maxZ() + 1,
+                result.maxX() + 1, result.maxY(), result.maxZ() + 1,
                 structureBoxes, biomeCells, WorldScopeScanner.getShapeDetail()
         );
     }
