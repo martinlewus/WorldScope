@@ -16,6 +16,7 @@ import net.minecraft.resources.Identifier;
 public final class WorldScopeClient implements ClientModInitializer {
     private static KeyMapping openKey;
     private static boolean showCoordinates = true;
+    private static boolean espEnabled = true;
 
     @Override
     public void onInitializeClient() {
@@ -34,6 +35,8 @@ public final class WorldScopeClient implements ClientModInitializer {
             }
         });
 
+        WorldScopeWorldRenderer.initialize();
+
         HudElementRegistry.attachElementBefore(
                 VanillaHudElements.CHAT,
                 Identifier.fromNamespaceAndPath("worldscope", "target_coordinates"),
@@ -50,6 +53,14 @@ public final class WorldScopeClient implements ClientModInitializer {
         graphics.fill(7, 7, 310, 31, 0xA9000000);
         graphics.text(client.font, Component.literal("WORLDSCOPE  " + result.dimension()), 13, 11, 0xFF80D8FF);
         graphics.text(client.font, Component.literal(line), 13, 21, 0xFFFFFFFF);
+    }
+
+    public static boolean isEspEnabled() {
+        return espEnabled;
+    }
+
+    public static void toggleEsp() {
+        espEnabled = !espEnabled;
     }
 
     public static boolean isShowingCoordinates() {

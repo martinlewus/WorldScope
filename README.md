@@ -12,6 +12,7 @@ WorldScope is being rebuilt as a **single-player world scanner**. It does not is
 - Structure searches inspect registered structure-set placement rules, then request candidate chunks only up to the structure-start stage and inspect their generated structure starts.
 - Biome searches sample the generator's biome data at the player's vertical level.
 - The optional HUD readout shows the selected result's dimension and bounding coordinates.
+- Toggle the through-wall ESP box from the right-hand settings panel. Structure bounds come from generated structure starts; biome bounds are the current approximate sample region.
 
 ## Important implementation notes
 
@@ -19,7 +20,7 @@ WorldScope is being rebuilt as a **single-player world scanner**. It does not is
 - Structure scans use structure placement data and generated structure starts, not `/locate` or the locate command's nearest-structure API.
 - Candidate structure chunks are checked sequentially and capped per scan to limit chunk-generation pressure.
 - Biome results are approximate sample cells, not exact biome polygons yet.
-- The first 2.0 milestone does not yet include the final through-wall 3D ESP renderer, detailed biome border mesh, subtype inference, persistent seed cache, proximity alerts, or alert audio. Those are the next implementation layers.
+- The through-wall ESP box is implemented for the active result. Detailed biome border meshes, subtype inference, persistent seed cache, proximity alerts, and alert audio remain follow-up layers.
 
 ## Build
 

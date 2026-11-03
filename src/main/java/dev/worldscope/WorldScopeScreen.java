@@ -76,6 +76,13 @@ public final class WorldScopeScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("CANCEL"), button -> WorldScopeScanner.cancel())
                 .bounds(panelLeft + panelWidth - 92, panelTop + 40, 76, 22).build());
 
+        addRenderableWidget(Button.builder(Component.literal("ESP: " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
+                button -> {
+                    WorldScopeClient.toggleEsp();
+                    clearWidgets();
+                    init();
+                }).bounds(panelLeft + panelWidth / 2 + 12, panelTop + 300, 108, 20).build());
+
         refreshCatalog();
     }
 
