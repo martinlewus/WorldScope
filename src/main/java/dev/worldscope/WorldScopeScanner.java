@@ -18,7 +18,6 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.server.integrated.IntegratedServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
@@ -78,7 +77,7 @@ public final class WorldScopeScanner {
 
     public static void startScan(String type, String id, String dimensionId, int requestedRadius) {
         Minecraft client = Minecraft.getInstance();
-        IntegratedServer server = client.getSingleplayerServer();
+        var server = client.getSingleplayerServer();
 
         if (server == null || client.player == null || client.level == null) {
             status = "WorldScope scanning is single-player only.";
@@ -167,7 +166,7 @@ public final class WorldScopeScanner {
                     int x = originX + dx;
                     int z = originZ + dz;
                     Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, quartY, z >> 2);
-                    String actualId = biome.unwrapKey().map(key -> key.location().toString()).orElse("");
+                    String actualId = biome.unwrapKey().map(key -> key.identifier().toString()).orElse("");
                     completed = samples.get();
                     total = Math.min(MAX_BIOME_SAMPLES, ((radius * 2 / sampleStep) + 1) * ((radius * 2 / sampleStep) + 1));
 
@@ -263,7 +262,7 @@ public final class WorldScopeScanner {
         Identifier identifier = Identifier.parse(wantedId);
         var registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
         for (var holder : registry.listElements().toList()) {
-            if (holder.unwrapKey().map(key -> key.location().equals(identifier)).orElse(false)) {
+            if (holder.unwrapKey().map(key -> key.identifier().equals(identifier)).orElse(false)) {
                 return holder.value();
             }
         }
