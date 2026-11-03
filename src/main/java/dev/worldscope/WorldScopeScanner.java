@@ -446,7 +446,7 @@ public final class WorldScopeScanner {
                             checkCandidateChunks(
                                     client, level, target, wantedId, dimensionId,
                                     search.candidates(), 0, originX, originZ,
-                                    new ArrayList<>(), search.budgetReached()
+                                    new ArrayList<>(), search.budgetReached(), new StructureScanStats()
                             );
                         }
                     });
