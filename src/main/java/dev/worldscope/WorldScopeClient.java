@@ -6,7 +6,7 @@ import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import com.mojang.blaze3d.platform.InputConstants;
 
 public final class WorldScopeClient implements ClientModInitializer {
@@ -15,7 +15,7 @@ public final class WorldScopeClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         KeyMapping.Category category = KeyMapping.Category.register(
-                ResourceLocation.fromNamespaceAndPath("worldscope", "main")
+                Identifier.fromNamespaceAndPath("worldscope", "main")
         );
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.worldscope.open", InputConstants.Type.KEYSYM, InputConstants.KEY_K, category
@@ -23,7 +23,7 @@ public final class WorldScopeClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (openKey.consumeClick()) {
                 if (client.player != null && client.level != null) {
-                    client.setScreen(new WorldScopeScreen());
+                    client.gui.setScreen(new WorldScopeScreen());
                 }
             }
         });
