@@ -131,11 +131,12 @@ public final class WorldScopeScanner {
     private static int biomeSampleStep(int detail) {
         return switch (Math.max(1, Math.min(8, detail))) {
             case 1 -> 48;
-            case 2 -> 32;
-            case 3 -> 24;
-            case 4 -> 16;
-            case 5 -> 12;
-            case 6 -> 8;
+            case 2 -> 40;
+            case 3 -> 32;
+            case 4 -> 24;
+            case 5 -> 16;
+            case 6 -> 12;
+            case 7 -> 8;
             default -> 4;
         };
     }
@@ -286,7 +287,7 @@ public final class WorldScopeScanner {
                         int biomeMaxY = Math.min(level.getMaxY() - 1, biomeMinY + 3);
                         List<WorldScopeBiomeCell> cells = traceBiomeRegion(
                                 level, wantedId, x, z, originX, originZ,
-                                sampleY, radius, sampleStep
+                                biomeMinY + 2, radius, sampleStep
                         );
                         if (cells.isEmpty()) {
                             cells = List.of(new WorldScopeBiomeCell(
