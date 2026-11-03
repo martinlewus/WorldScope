@@ -13,6 +13,7 @@ WorldScope is being rebuilt as a **single-player world scanner**. It does not is
 - Biome searches sample the generator's biome data at the player's vertical level.
 - The optional HUD readout shows the selected result's dimension and bounding coordinates.
 - Toggle the through-wall ESP box from the right-hand settings panel. Structure bounds come from generated structure starts; biome bounds are the current approximate sample region.
+- Proximity alerts can be toggled and their structure trigger radius adjusted from 8 to 256 blocks. Structures trigger when the player approaches their box; biome alerts trigger on entering the approximate sampled region. The alert uses a pitched vanilla UI click sound.
 
 ## Important implementation notes
 
