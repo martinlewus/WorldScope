@@ -119,7 +119,13 @@ public final class WorldScopeWorldRenderer {
             // Detail 1 is the original single bounding box. Higher settings fade
             // that broad box back and progressively reveal the generated room/piece
             // bounds from StructureStart#getPieces().
-            float aggregateAlpha = 0.92f * (8 - state.shapeDetail()) / 7.0f;
+            // Keep a faint overall boundary even at detail 8. Some vanilla
+            // structures can expose an incomplete or empty piece list from their
+            // reference chunk; the aggregate start box is the reliable fallback
+            // and also makes the selected target easy to identify.
+            float aggregateAlpha = state.structureBoxes().isEmpty()
+                    ? 1.0f
+                    : Math.max(0.22f, 0.92f * (8 - state.shapeDetail()) / 7.0f);
             if (state.shapeDetail() == 1) aggregateAlpha = 0.92f;
             if (aggregateAlpha > 0.01f) {
                 addCuboid(matrices.last().pose(), vertices,
