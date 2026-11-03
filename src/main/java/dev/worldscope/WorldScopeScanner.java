@@ -26,6 +26,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.level.levelgen.structure.StructureCheckResult;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
@@ -472,7 +473,8 @@ public final class WorldScopeScanner {
             int originX,
             int originZ,
             List<WorldScopeHit> found,
-            boolean placementBudgetReached
+            boolean placementBudgetReached,
+            StructureScanStats stats
     ) {
         if (CANCELLED.get()) {
             finishHits(found, "Structure scan cancelled.");
@@ -480,17 +482,24 @@ public final class WorldScopeScanner {
         }
 
         if (index >= candidates.size() || found.size() >= MAX_STRUCTURE_RESULTS) {
+            String diagnostic = "Minecraft presence checks: " + stats.savedStarts
+                    + " saved starts, " + stats.generationRequired + " need generation, "
+                    + stats.rejectedByMinecraft + " rejected, " + stats.presenceErrors
+                    + " check errors, " + stats.loadedWithoutStart
+                    + " loaded without a valid start.";
             String message;
             if (found.isEmpty()) {
-                message = "No generated starts were found among the " + candidates.size()
-                        + " nearest placement candidates.";
+                message = "No matching structure start was verified. Checked "
+                        + candidates.size() + " candidate chunks. " + diagnostic;
             } else if (placementBudgetReached) {
-                message = "Found " + found.size() + " results; placement search reached its workload limit.";
+                message = "Found " + found.size() + " result(s); the placement search reached its workload limit. "
+                        + diagnostic;
             } else if (found.size() >= MAX_STRUCTURE_RESULTS) {
                 message = "Found " + found.size()
-                        + " results (display limit reached; more may exist in the search radius).";
+                        + " results (display limit reached; more may exist in the search radius). "
+                        + diagnostic;
             } else {
-                message = "Found " + found.size() + " nearest structure result(s).";
+                message = "Found " + found.size() + " nearest structure result(s). " + diagnostic;
             }
             finishHits(found, message);
             return;
@@ -507,6 +516,44 @@ public final class WorldScopeScanner {
             if (CANCELLED.get()) {
                 finishHits(found, "Structure scan cancelled.");
                 return;
+            }
+
+            // Ask Minecraft's native structure locator before loading/generating
+            // the candidate chunk. This performs the vanilla persisted-start and
+            // biome/placement checks rather than treating every placement-grid
+            // point as a real structure.
+            StructureCheckResult presence;
+            try {
+                presence = level.structureManager().checkStructurePresence(
+                        new ChunkPos(candidate.x(), candidate.z()),
+                        target,
+                        candidate.placement(),
+                        false
+                );
+            } catch (Throwable presenceError) {
+                // If the native storage check fails, fall back to the actual
+                // structure-start stage instead of silently discarding the target.
+                stats.presenceErrors++;
+                presence = StructureCheckResult.CHUNK_LOAD_NEEDED;
+            }
+
+            if (presence == StructureCheckResult.START_NOT_PRESENT) {
+                stats.rejectedByMinecraft++;
+                completed = index + 1;
+                status = "Minecraft rejected " + stats.rejectedByMinecraft
+                        + " impossible placement candidates...";
+                checkCandidateChunks(
+                        client, level, target, wantedId, dimensionId,
+                        candidates, index + 1, originX, originZ,
+                        found, placementBudgetReached, stats
+                );
+                return;
+            }
+
+            if (presence == StructureCheckResult.START_PRESENT) {
+                stats.savedStarts++;
+            } else {
+                stats.generationRequired++;
             }
 
             level.getChunkSource()
@@ -530,6 +577,9 @@ public final class WorldScopeScanner {
                                     );
                                     List<WorldScopeBox> pieces = extractPieceBounds(start);
                                     found.add(new WorldScopeHit(result, pieces, List.of()));
+                                    stats.verifiedStarts++;
+                                } else {
+                                    stats.loadedWithoutStart++;
                                 }
                             }
                         }
@@ -539,7 +589,7 @@ public final class WorldScopeScanner {
                         checkCandidateChunks(
                                 client, level, target, wantedId, dimensionId,
                                 candidates, index + 1, originX, originZ,
-                                found, placementBudgetReached
+                                found, placementBudgetReached, stats
                         );
                     }));
         });
@@ -594,7 +644,7 @@ public final class WorldScopeScanner {
             int radius,
             long worldSeed
     ) {
-        Map<Long, ChunkCandidate> unique = new HashMap<>();
+        Map<CandidateKey, ChunkCandidate> unique = new HashMap<>();
         boolean budgetReached = false;
         long radiusSquared = (long) radius * radius;
 
@@ -606,7 +656,9 @@ public final class WorldScopeScanner {
                 );
                 budgetReached |= slice.budgetReached();
                 for (ChunkCandidate candidate : slice.candidates()) {
-                    long key = chunkKey(candidate.x(), candidate.z());
+                    CandidateKey key = new CandidateKey(
+                            candidate.x(), candidate.z(), candidate.placement()
+                    );
                     unique.merge(key, candidate, (a, b) ->
                             a.distanceSquared() <= b.distanceSquared() ? a : b);
                 }
@@ -620,7 +672,9 @@ public final class WorldScopeScanner {
                                 placement, pos, originX, originZ, radiusSquared
                         );
                         if (candidate != null) {
-                            unique.put(chunkKey(candidate.x(), candidate.z()), candidate);
+                            unique.put(new CandidateKey(
+                                    candidate.x(), candidate.z(), candidate.placement()
+                            ), candidate);
                         }
                     }
                 }
@@ -632,10 +686,11 @@ public final class WorldScopeScanner {
                     ChunkCandidate candidate = new ChunkCandidate(
                             chunkX, chunkZ,
                             squaredDistance((long) chunkX * 16 + 8 - originX,
-                                    (long) chunkZ * 16 + 8 - originZ)
+                                    (long) chunkZ * 16 + 8 - originZ),
+                            placement
                     );
                     if (candidate.distanceSquared() <= radiusSquared) {
-                        unique.put(chunkKey(chunkX, chunkZ), candidate);
+                        unique.put(new CandidateKey(chunkX, chunkZ, placement), candidate);
                     }
                 }
             }
@@ -759,7 +814,7 @@ public final class WorldScopeScanner {
         long dz = (long) locate.getZ() - originZ;
         long distance = squaredDistance(dx, dz);
         if (distance > radiusSquared) return null;
-        return new ChunkCandidate(pos.x(), pos.z(), distance);
+        return new ChunkCandidate(pos.x(), pos.z(), distance, placement);
     }
 
     private static long squaredDistance(long dx, long dz) {
@@ -810,7 +865,21 @@ public final class WorldScopeScanner {
         }
     }
 
-    private record ChunkCandidate(int x, int z, long distanceSquared) {
+    private record CandidateKey(int x, int z, StructurePlacement placement) {
+    }
+
+    private record ChunkCandidate(
+            int x, int z, long distanceSquared, StructurePlacement placement
+    ) {
+    }
+
+    private static final class StructureScanStats {
+        private int savedStarts;
+        private int generationRequired;
+        private int rejectedByMinecraft;
+        private int presenceErrors;
+        private int loadedWithoutStart;
+        private int verifiedStarts;
     }
 
     private record BiomeGridPoint(int x, int z) {
