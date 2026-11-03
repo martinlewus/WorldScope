@@ -162,7 +162,7 @@ public final class WorldScopeScreen extends Screen {
         StringBuilder label = new StringBuilder();
         for (String word : words) {
             if (word.isBlank()) continue;
-            if (!label.isEmpty()) label.append(' ');
+            if (label.length() > 0) label.append(' ');
             label.append(Character.toUpperCase(word.charAt(0)));
             if (word.length() > 1) label.append(word.substring(1));
         }
