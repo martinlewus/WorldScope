@@ -17,6 +17,8 @@ import net.minecraft.resources.Identifier;
 
 public final class WorldScopeClient implements ClientModInitializer {
     private static KeyMapping openKey;
+    private static KeyMapping previousResultKey;
+    private static KeyMapping nextResultKey;
     private static boolean showCoordinates = true;
     private static boolean espEnabled = true;
     private static boolean proximityAlertsEnabled = true;
@@ -32,6 +34,12 @@ public final class WorldScopeClient implements ClientModInitializer {
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.worldscope.open", InputConstants.Type.KEYSYM, InputConstants.KEY_K, category
         ));
+        previousResultKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.worldscope.previous_result", InputConstants.Type.KEYSYM, InputConstants.KEY_LEFT, category
+        ));
+        nextResultKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.worldscope.next_result", InputConstants.Type.KEYSYM, InputConstants.KEY_RIGHT, category
+        ));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (openKey.consumeClick()) {
@@ -39,6 +47,23 @@ public final class WorldScopeClient implements ClientModInitializer {
                     client.gui.setScreen(new WorldScopeScreen());
                 }
             }
+
+            // These bindings intentionally work in normal gameplay, outside the
+            // WorldScope screen. The screen has its own event handler for arrow
+            // navigation while the catalog is open.
+            while (previousResultKey.consumeClick()) {
+                if (client.screen == null && client.player != null && client.level != null
+                        && client.getSingleplayerServer() != null) {
+                    WorldScopeScanner.previousResult();
+                }
+            }
+            while (nextResultKey.consumeClick()) {
+                if (client.screen == null && client.player != null && client.level != null
+                        && client.getSingleplayerServer() != null) {
+                    WorldScopeScanner.nextResult();
+                }
+            }
+
             updateProximityAlert(client);
         });
 
