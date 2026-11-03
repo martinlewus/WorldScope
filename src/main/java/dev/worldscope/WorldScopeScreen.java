@@ -83,6 +83,26 @@ public final class WorldScopeScreen extends Screen {
                     init();
                 }).bounds(panelLeft + panelWidth / 2 + 12, panelTop + 300, 108, 20).build());
 
+        addRenderableWidget(Button.builder(Component.literal("ALERTS: " + (WorldScopeClient.areProximityAlertsEnabled() ? "ON" : "OFF")),
+                button -> {
+                    WorldScopeClient.toggleProximityAlerts();
+                    clearWidgets();
+                    init();
+                }).bounds(panelLeft + panelWidth / 2 + 12, panelTop + 326, 108, 20).build());
+
+        EditBox alertRadiusBox = new EditBox(font, panelLeft + panelWidth / 2 + 12, panelTop + 352, 62, 20, Component.literal("Alert radius"));
+        alertRadiusBox.setValue(Integer.toString(WorldScopeClient.getProximityRadius()));
+        addRenderableWidget(alertRadiusBox);
+        addRenderableWidget(Button.builder(Component.literal("SET RANGE"), button -> {
+            try {
+                WorldScopeClient.setProximityRadius(Integer.parseInt(alertRadiusBox.getValue()));
+            } catch (NumberFormatException exception) {
+                WorldScopeClient.setProximityRadius(64);
+            }
+            clearWidgets();
+            init();
+        }).bounds(panelLeft + panelWidth / 2 + 80, panelTop + 352, 88, 20).build());
+
         refreshCatalog();
     }
 
