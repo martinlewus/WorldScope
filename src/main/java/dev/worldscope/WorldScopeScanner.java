@@ -34,15 +34,14 @@ import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement
 
 public final class WorldScopeScanner {
     private static final int HARD_MAX_RADIUS = 10_000_000;
-    private static final int MAX_STRUCTURE_CANDIDATES = 256;
-    private static final int MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT = 128;
-    private static final int MAX_STRUCTURE_RESULTS = 32;
+    private static final int MAX_STRUCTURE_CANDIDATES = 8192;
+    private static final int MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT = 4096;
+    private static final int MAX_STRUCTURE_RESULTS = 128;
     private static final int MAX_PLACEMENT_REGION_TESTS = 1_000_000;
     private static final int MAX_BIOME_SAMPLES = 750_000;
-    private static final int MAX_BIOME_RESULTS = 16;
-    private static final int MAX_BIOME_REGION_CELLS = 512;
+    private static final int MAX_BIOME_RESULTS = 128;
+    private static final int MAX_BIOME_REGION_CELLS = 8192;
     private static final int VERTICAL_BIOME_SAMPLE_STEP = 8;
-    private static final int MIN_BIOME_RESULT_DISTANCE = 1024;
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "WorldScope-Scanner");
@@ -242,9 +241,8 @@ public final class WorldScopeScanner {
         final int[] verticalSamples = buildBiomeHeightSamples(
                 level.getMinY(), level.getMaxY() - 1, originY
         );
-        final Set<Long> coveredCells = new HashSet<>();
+        final Set<BiomeGridPoint> coveredCells = new HashSet<>();
         final List<WorldScopeHit> found = new ArrayList<>();
-        final List<BiomeSeed> resultSeeds = new ArrayList<>();
         AtomicInteger samples = new AtomicInteger();
         boolean sampleLimitReached = false;
 
@@ -269,16 +267,8 @@ public final class WorldScopeScanner {
                             break outer;
                         }
 
-                        long sampleKey = gridKey(x, z);
+                        BiomeGridPoint sampleKey = new BiomeGridPoint(x, sampleY >> 2, z);
                         if (coveredCells.contains(sampleKey)) continue;
-
-                        boolean tooCloseToExisting = resultSeeds.stream().anyMatch(seed -> {
-                            long sx = (long) seed.x() - x;
-                            long sz = (long) seed.z() - z;
-                            return sx * sx + sz * sz
-                                    < (long) MIN_BIOME_RESULT_DISTANCE * MIN_BIOME_RESULT_DISTANCE;
-                        });
-                        if (tooCloseToExisting) continue;
 
                         Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, sampleY >> 2, z >> 2);
                         String actualId = biome.unwrapKey()
@@ -301,8 +291,9 @@ public final class WorldScopeScanner {
                         }
 
                         for (WorldScopeBiomeCell cell : cells) {
-                            coveredCells.add(gridKey(
+                            coveredCells.add(new BiomeGridPoint(
                                     cell.minX() + (cell.maxX() - cell.minX()) / 2,
+                                    sampleY >> 2,
                                     cell.minZ() + (cell.maxZ() - cell.minZ()) / 2
                             ));
                         }
@@ -318,7 +309,6 @@ public final class WorldScopeScanner {
                                 maxX, biomeMaxY, maxZ
                         );
                         found.add(new WorldScopeHit(result, List.of(), cells));
-                        resultSeeds.add(new BiomeSeed(x, z));
 
                         if (found.size() >= MAX_BIOME_RESULTS) break outer;
                         status = "Found " + found.size() + " biome region(s); continuing outward...";
@@ -652,6 +642,7 @@ public final class WorldScopeScanner {
         result.sort(Comparator.comparingLong(ChunkCandidate::distanceSquared));
         if (result.size() > MAX_STRUCTURE_CANDIDATES) {
             result.subList(MAX_STRUCTURE_CANDIDATES, result.size()).clear();
+            budgetReached = true;
         }
         return new CandidateSearch(List.copyOf(result), budgetReached);
     }
@@ -689,7 +680,10 @@ public final class WorldScopeScanner {
             if (candidates.size() >= MAX_STRUCTURE_CANDIDATES_PER_PLACEMENT) {
                 long farthest = candidates.stream()
                         .mapToLong(ChunkCandidate::distanceSquared).max().orElse(Long.MAX_VALUE);
-                if (node.minimumDistanceSquared() > farthest) break;
+                if (node.minimumDistanceSquared() > farthest) {
+                    budgetReached = true;
+                    break;
+                }
             }
 
             if (++tests > MAX_PLACEMENT_REGION_TESTS) {
@@ -816,10 +810,7 @@ public final class WorldScopeScanner {
     private record ChunkCandidate(int x, int z, long distanceSquared) {
     }
 
-    private record BiomeGridPoint(int x, int z) {
-    }
-
-    private record BiomeSeed(int x, int z) {
+    private record BiomeGridPoint(int x, int y, int z) {
     }
 
     private record RegionNode(int regionX, int regionZ, long minimumDistanceSquared) {
