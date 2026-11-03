@@ -45,7 +45,6 @@ public final class WorldScopeScreen extends Screen {
     private boolean compactUi;
     private static final String MARQUEE_GAP = "      ";
     private static final int MARQUEE_START_DELAY_TICKS = 40;
-    private static final float MARQUEE_PIXELS_PER_TICK = 0.45f;
     private float marqueeOffsetPx;
     private int marqueeDelayTicks = MARQUEE_START_DELAY_TICKS;
     private String marqueeResetKey = "";
@@ -84,12 +83,14 @@ public final class WorldScopeScreen extends Screen {
             dimensionButtons.add(new DimensionButtonLayout(x, dimY, 42, 20, "END", END));
 
             int hudWidth = 76;
+            int hudX = left + w - 12 - hudWidth;
+            addMarqueeSpeedButton(hudX - 70, dimY, 64, 20, true);
             addRenderableWidget(Button.builder(Component.literal("HUD: " + (WorldScopeClient.isShowingCoordinates() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleCoordinates();
                         status = WorldScopeClient.isShowingCoordinates() ? "Target HUD enabled." : "Target HUD disabled.";
                         rebuildControls();
-                    }).bounds(left + w - 12 - hudWidth, dimY, hudWidth, 20).build());
+                    }).bounds(hudX, dimY, hudWidth, 20).build());
 
             int searchY = top + 84;
             int scanWidth = 76;
@@ -122,6 +123,8 @@ public final class WorldScopeScreen extends Screen {
             dimensionButtons.add(new DimensionButtonLayout(left + 346, dimY, 76, 22, "NETHER", NETHER));
             dimensionButtons.add(new DimensionButtonLayout(left + 428, dimY, 54, 22, "END", END));
 
+            int hudX = left + w - 126;
+            addMarqueeSpeedButton(hudX - 70, modeY, 64, 22, false);
             addRenderableWidget(Button.builder(Component.literal("TARGET HUD: " + (WorldScopeClient.isShowingCoordinates() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleCoordinates();
@@ -129,7 +132,7 @@ public final class WorldScopeScreen extends Screen {
                                 ? "Target HUD enabled. Coordinates appear after a successful scan."
                                 : "Target HUD disabled.";
                         rebuildControls();
-                    }).bounds(left + w - 126, modeY, 110, 22).build());
+                    }).bounds(hudX, modeY, 110, 22).build());
 
             int searchY = top + 80;
             searchBox = new EditBox(font, left + 16, searchY, Math.max(110, w - 270), 22,
@@ -158,6 +161,19 @@ public final class WorldScopeScreen extends Screen {
         restoreSavedTarget();
         addResultNavigationControls();
         createInfoControls();
+    }
+
+    private void addMarqueeSpeedButton(int x, int y, int buttonWidth, int buttonHeight, boolean compact) {
+        addRenderableWidget(Button.builder(
+                Component.literal((compact ? "SPEED " : "SPEED ") + WorldScopeUserSettings.getMarqueeSpeedLevel() + "x"),
+                button -> {
+                    int nextSpeed = WorldScopeUserSettings.cycleMarqueeSpeedLevel();
+                    marqueeOffsetPx = 0.0f;
+                    marqueeDelayTicks = MARQUEE_START_DELAY_TICKS;
+                    status = "Status text scroll speed set to " + nextSpeed + "x.";
+                    rebuildControls();
+                }
+        ).bounds(x, y, buttonWidth, buttonHeight).build());
     }
 
     private EditBox createRadiusBox(int x, int y, int boxWidth, int boxHeight) {
@@ -449,7 +465,7 @@ public final class WorldScopeScreen extends Screen {
 
         float cycleWidth = font.width(line + MARQUEE_GAP);
         if (cycleWidth > 0.0f) {
-            marqueeOffsetPx += MARQUEE_PIXELS_PER_TICK;
+            marqueeOffsetPx += WorldScopeUserSettings.getMarqueePixelsPerTick();
             if (marqueeOffsetPx >= cycleWidth) {
                 marqueeOffsetPx -= cycleWidth;
             }
@@ -457,13 +473,15 @@ public final class WorldScopeScreen extends Screen {
     }
 
     private void drawMarquee(GuiGraphicsExtractor graphics, String line,
-                             int left, int top, int right, int bottom) {
+                             int left, int top, int right, int bottom, float partialTick) {
         if (line == null || line.isEmpty()) return;
 
         int textX = left + 7;
         int textY = top + 7;
         int availableWidth = Math.max(1, right - left - 14);
-        float offset = font.width(line) > availableWidth ? marqueeOffsetPx : 0.0f;
+        float offset = font.width(line) > availableWidth
+                ? marqueeOffsetPx + WorldScopeUserSettings.getMarqueePixelsPerTick() * partialTick
+                : 0.0f;
         int cycleWidth = font.width(line + MARQUEE_GAP);
 
         // Pixel-based subpixel translation plus a scissor keeps the full message
@@ -616,7 +634,7 @@ public final class WorldScopeScreen extends Screen {
         int statusRight = left + w - 12;
         int statusBottom = top + h - 8;
         graphics.fill(statusLeft, statusTop, statusRight, statusBottom, 0xFF333333);
-        drawMarquee(graphics, scanStatus, statusLeft, statusTop, statusRight, statusBottom);
+        drawMarquee(graphics, scanStatus, statusLeft, statusTop, statusRight, statusBottom, partialTick);
 
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
     }
