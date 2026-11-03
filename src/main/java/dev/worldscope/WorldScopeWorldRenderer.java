@@ -164,16 +164,9 @@ public final class WorldScopeWorldRenderer {
                         pMinX, pMinY, pMinZ, pMaxX, pMaxY, pMaxZ, red, green, blue, 0.95f);
             }
         } else {
-            // A biome is a sampled volume, not one rectangular structure. Keep the
-            // aggregate volume only at the coarsest setting; fine settings focus
-            // on its actual sampled boundary cells.
-            if (state.shapeDetail() == 1) {
-                addCuboid(matrices.last().pose(), vertices,
-                        minX, minY, minZ, maxX, maxY, maxZ,
-                        red, green, blue, 0.035f);
-                addFrame(matrices.last().pose(), vertices,
-                        minX, minY, minZ, maxX, maxY, maxZ, red, green, blue, 0.45f);
-            }
+            // Biome targets are rendered from their traced boundary columns only.
+            // Do not draw one enclosing rectangular box: it hides the actual
+            // sampled footprint and makes a biome look like a single chunk marker.
             addBiomeBorders(matrices.last().pose(), vertices, state.biomeCells(), red, green, blue);
         }
         }
