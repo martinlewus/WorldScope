@@ -78,14 +78,17 @@ public final class WorldScopeScreen extends Screen {
         radiusBox = new EditBox(font, left + w - 224, top + 80, 92, 22, Component.literal("Maximum distance"));
         radiusBox.setValue("3000");
         radiusBox.setMaxLength(5);
-        radiusBox.setFilter(value -> {
-            if (value.isEmpty()) return true;
-            if (!value.matches("\\d{1,5}")) return false;
+        radiusBox.setResponder(value -> {
+            String digits = value.replaceAll("[^0-9]", "");
+            if (digits.length() > 5) digits = digits.substring(0, 5);
             try {
-                return Integer.parseInt(value) <= MAX_SEARCH_DISTANCE;
+                if (!digits.isEmpty() && Integer.parseInt(digits) > MAX_SEARCH_DISTANCE) {
+                    digits = Integer.toString(MAX_SEARCH_DISTANCE);
+                }
             } catch (NumberFormatException ignored) {
-                return false;
+                digits = "3000";
             }
+            if (!digits.equals(value)) radiusBox.setValue(digits);
         });
         addRenderableWidget(radiusBox);
 
@@ -119,7 +122,16 @@ public final class WorldScopeScreen extends Screen {
         EditBox alertRadiusBox = new EditBox(font, infoLeft + 10, listBottom - 25, 64, 20, Component.literal("Alert radius"));
         alertRadiusBox.setValue(Integer.toString(WorldScopeClient.getProximityRadius()));
         alertRadiusBox.setMaxLength(3);
-        alertRadiusBox.setFilter(value -> value.isEmpty() || value.matches("\\d{1,3}"));
+        alertRadiusBox.setResponder(value -> {
+            String digits = value.replaceAll("[^0-9]", "");
+            if (digits.length() > 3) digits = digits.substring(0, 3);
+            try {
+                if (!digits.isEmpty() && Integer.parseInt(digits) > 256) digits = "256";
+            } catch (NumberFormatException ignored) {
+                digits = "64";
+            }
+            if (!digits.equals(value)) alertRadiusBox.setValue(digits);
+        });
         addRenderableWidget(alertRadiusBox);
 
         addRenderableWidget(Button.builder(Component.literal("SET ALERT RANGE"), button -> {
