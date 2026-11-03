@@ -648,7 +648,7 @@ public final class WorldScopeScanner {
                                         stats.referencedStartsFound++;
                                     }
                                     if (stats.recoveredStartLocations.size() < 12) {
-                                        ChunkPos startPos = start.getPos();
+                                        ChunkPos startPos = start.getChunkPos();
                                         stats.recoveredStartLocations.add(
                                                 startPos.x() + "," + startPos.z()
                                         );
