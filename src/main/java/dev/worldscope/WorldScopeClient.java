@@ -9,6 +9,8 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.sounds.SoundEvents;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -17,6 +19,10 @@ public final class WorldScopeClient implements ClientModInitializer {
     private static KeyMapping openKey;
     private static boolean showCoordinates = true;
     private static boolean espEnabled = true;
+    private static boolean proximityAlertsEnabled = true;
+    private static int proximityRadius = 64;
+    private static boolean wasNearTarget = false;
+    private static String lastAlertKey = "";
 
     @Override
     public void onInitializeClient() {
@@ -33,6 +39,7 @@ public final class WorldScopeClient implements ClientModInitializer {
                     client.gui.setScreen(new WorldScopeScreen());
                 }
             }
+            updateProximityAlert(client);
         });
 
         WorldScopeWorldRenderer.initialize();
@@ -53,6 +60,65 @@ public final class WorldScopeClient implements ClientModInitializer {
         graphics.fill(7, 7, 310, 31, 0xA9000000);
         graphics.text(client.font, Component.literal("WORLDSCOPE  " + result.dimension()), 13, 11, 0xFF80D8FF);
         graphics.text(client.font, Component.literal(line), 13, 21, 0xFFFFFFFF);
+    }
+
+    private static void updateProximityAlert(Minecraft client) {
+        WorldScopeResult result = WorldScopeScanner.getActiveResult();
+        if (!proximityAlertsEnabled || result == null || client.player == null
+                || client.level == null || client.getSingleplayerServer() == null) {
+            wasNearTarget = false;
+            lastAlertKey = "";
+            return;
+        }
+
+        String currentDimension = client.level.dimension().identifier().toString();
+        if (!currentDimension.equals(result.dimension())) {
+            wasNearTarget = false;
+            return;
+        }
+
+        double x = client.player.getX();
+        double y = client.player.getY();
+        double z = client.player.getZ();
+
+        boolean near;
+        if ("biome".equals(result.type())) {
+            near = x >= result.minX() && x <= result.maxX() + 1
+                    && z >= result.minZ() && z <= result.maxZ() + 1;
+        } else {
+            double dx = Math.max(Math.max(result.minX() - x, 0.0), x - (result.maxX() + 1));
+            double dy = Math.max(Math.max(result.minY() - y, 0.0), y - (result.maxY() + 1));
+            double dz = Math.max(Math.max(result.minZ() - z, 0.0), z - (result.maxZ() + 1));
+            near = dx * dx + dy * dy + dz * dz <= (double) proximityRadius * proximityRadius;
+        }
+
+        String key = result.type() + "|" + result.dimension() + "|" + result.id()
+                + "|" + result.minX() + "|" + result.minZ();
+        if (near && (!wasNearTarget || !key.equals(lastAlertKey))) {
+            client.getSoundManager().play(
+                    SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK, 1.35F)
+            );
+        }
+        wasNearTarget = near;
+        lastAlertKey = key;
+    }
+
+    public static boolean areProximityAlertsEnabled() {
+        return proximityAlertsEnabled;
+    }
+
+    public static void toggleProximityAlerts() {
+        proximityAlertsEnabled = !proximityAlertsEnabled;
+        wasNearTarget = false;
+    }
+
+    public static int getProximityRadius() {
+        return proximityRadius;
+    }
+
+    public static void setProximityRadius(int radius) {
+        proximityRadius = Math.max(8, Math.min(256, radius));
+        wasNearTarget = false;
     }
 
     public static boolean isEspEnabled() {
