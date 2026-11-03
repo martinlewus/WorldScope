@@ -82,7 +82,9 @@ public final class WorldScopeWorldRenderer {
         boxState = new BoxState(
                 result.minX(), result.minY(), result.minZ(),
                 result.maxX() + 1, result.maxY(), result.maxZ() + 1,
-                structureBoxes, biomeCells, WorldScopeScanner.getShapeDetail()
+                structureBoxes, biomeCells, WorldScopeScanner.getShapeDetail(),
+                WorldScopeUserSettings.getBoxColor(),
+                WorldScopeUserSettings.isTracerEnabled()
         );
     }
 
@@ -114,6 +116,10 @@ public final class WorldScopeWorldRenderer {
         float maxX = state.maxX();
         float maxY = state.maxY();
         float maxZ = state.maxZ();
+        int rgb = state.colorRgb();
+        float red = ((rgb >> 16) & 0xFF) / 255.0f;
+        float green = ((rgb >> 8) & 0xFF) / 255.0f;
+        float blue = (rgb & 0xFF) / 255.0f;
 
         if (state.biomeCells().isEmpty()) {
             // Detail 1 is the original single bounding box. Higher settings fade
@@ -130,9 +136,9 @@ public final class WorldScopeWorldRenderer {
             if (aggregateAlpha > 0.01f) {
                 addCuboid(matrices.last().pose(), vertices,
                         minX, minY, minZ, maxX, maxY, maxZ,
-                        0.05f, 0.62f, 0.88f, 0.06f * aggregateAlpha);
+                        red, green, blue, 0.06f * aggregateAlpha);
                 addFrame(matrices.last().pose(), vertices,
-                        minX, minY, minZ, maxX, maxY, maxZ, aggregateAlpha);
+                        minX, minY, minZ, maxX, maxY, maxZ, red, green, blue, aggregateAlpha);
             }
 
             List<WorldScopeBox> pieces = state.structureBoxes();
@@ -149,9 +155,9 @@ public final class WorldScopeWorldRenderer {
                 float pMaxZ = piece.maxZ() + 1;
                 addCuboid(matrices.last().pose(), vertices,
                         pMinX, pMinY, pMinZ, pMaxX, pMaxY, pMaxZ,
-                        0.02f, 0.72f, 1.0f, 0.025f);
+                        red, green, blue, 0.025f);
                 addFrame(matrices.last().pose(), vertices,
-                        pMinX, pMinY, pMinZ, pMaxX, pMaxY, pMaxZ, 0.95f);
+                        pMinX, pMinY, pMinZ, pMaxX, pMaxY, pMaxZ, red, green, blue, 0.95f);
             }
         } else {
             // A biome is a sampled volume, not one rectangular structure. Keep the
@@ -160,12 +166,27 @@ public final class WorldScopeWorldRenderer {
             if (state.shapeDetail() == 1) {
                 addCuboid(matrices.last().pose(), vertices,
                         minX, minY, minZ, maxX, maxY, maxZ,
-                        0.05f, 0.62f, 0.88f, 0.035f);
+                        red, green, blue, 0.035f);
                 addFrame(matrices.last().pose(), vertices,
-                        minX, minY, minZ, maxX, maxY, maxZ, 0.45f);
+                        minX, minY, minZ, maxX, maxY, maxZ, red, green, blue, 0.45f);
             }
-            addBiomeBorders(matrices.last().pose(), vertices, state.biomeCells());
+            addBiomeBorders(matrices.last().pose(), vertices, state.biomeCells(), red, green, blue);
         }
+        if (state.tracerEnabled()) {
+            Minecraft client = Minecraft.getInstance();
+            if (client.player != null) {
+                Vec3 look = client.player.getLookAngle().normalize();
+                Vec3 tracerStart = camera.add(look.scale(0.35));
+                Vec3 targetCenter = new Vec3(
+                        (state.minX() + state.maxX()) * 0.5,
+                        (state.minY() + state.maxY()) * 0.5,
+                        (state.minZ() + state.maxZ()) * 0.5
+                );
+                addTracer(matrices.last().pose(), vertices, tracerStart, targetCenter,
+                        red, green, blue);
+            }
+        }
+
         matrices.popPose();
 
         BUFFER.upload();
@@ -174,7 +195,41 @@ public final class WorldScopeWorldRenderer {
         BUFFER.endFrame();
     }
 
-    private static void addBiomeBorders(Matrix4fc matrix, VertexConsumer vertices, List<WorldScopeBiomeCell> cells) {
+    private static void addTracer(Matrix4fc matrix, VertexConsumer vertices,
+                                   Vec3 from, Vec3 to,
+                                   float red, float green, float blue) {
+        Vec3 direction = to.subtract(from);
+        double lengthSquared = direction.lengthSqr();
+        if (lengthSquared < 1.0) return;
+        direction = direction.normalize();
+
+        Vec3 referenceUp = Math.abs(direction.y) > 0.92
+                ? new Vec3(1.0, 0.0, 0.0)
+                : new Vec3(0.0, 1.0, 0.0);
+        Vec3 side = direction.cross(referenceUp).normalize().scale(0.035);
+        Vec3 vertical = direction.cross(side).normalize().scale(0.035);
+
+        // Two perpendicular ribbons form a thin, camera-readable 3D tracer.
+        addTracerRibbon(matrix, vertices, from, to, side, red, green, blue);
+        addTracerRibbon(matrix, vertices, from, to, vertical, red, green, blue);
+    }
+
+    private static void addTracerRibbon(Matrix4fc matrix, VertexConsumer vertices,
+                                        Vec3 from, Vec3 to, Vec3 offset,
+                                        float red, float green, float blue) {
+        Vec3 a = from.add(offset);
+        Vec3 b = from.subtract(offset);
+        Vec3 c = to.subtract(offset);
+        Vec3 d = to.add(offset);
+        vertices.addVertex(matrix, (float) a.x, (float) a.y, (float) a.z).setColor(red, green, blue, 0.95f);
+        vertices.addVertex(matrix, (float) b.x, (float) b.y, (float) b.z).setColor(red, green, blue, 0.95f);
+        vertices.addVertex(matrix, (float) c.x, (float) c.y, (float) c.z).setColor(red, green, blue, 0.95f);
+        vertices.addVertex(matrix, (float) d.x, (float) d.y, (float) d.z).setColor(red, green, blue, 0.95f);
+    }
+
+    private static void addBiomeBorders(Matrix4fc matrix, VertexConsumer vertices,
+                                        List<WorldScopeBiomeCell> cells,
+                                        float red, float green, float blue) {
         Set<Long> occupied = new HashSet<>();
         for (WorldScopeBiomeCell cell : cells) {
             occupied.add(gridKey(cell.minX(), cell.minZ()));
@@ -189,7 +244,7 @@ public final class WorldScopeWorldRenderer {
             float y0 = cell.y() - 0.18f;
             float y1 = cell.y() + 0.18f;
             float thickness = 0.10f;
-            float red = 1.0f, green = 0.72f, blue = 0.12f, alpha = 0.98f;
+            float alpha = 0.98f;
 
             int cellWidth = Math.max(1, cell.maxX() - cell.minX());
             int cellDepth = Math.max(1, cell.maxZ() - cell.minZ());
@@ -218,9 +273,10 @@ public final class WorldScopeWorldRenderer {
 
     private static void addFrame(Matrix4fc matrix, VertexConsumer vertices,
                                  float minX, float minY, float minZ,
-                                 float maxX, float maxY, float maxZ, float alpha) {
+                                 float maxX, float maxY, float maxZ,
+                                 float r, float g, float b, float alpha) {
         float t = 0.13f;
-        float r = 0.08f, g = 0.88f, b = 1f, a = alpha;
+        float a = alpha;
 
         // Bottom rectangle.
         addCuboid(matrix, vertices, minX, minY, minZ, maxX, minY + t, minZ + t, r, g, b, a);
@@ -309,7 +365,9 @@ public final class WorldScopeWorldRenderer {
             float maxX, float maxY, float maxZ,
             List<WorldScopeBox> structureBoxes,
             List<WorldScopeBiomeCell> biomeCells,
-            int shapeDetail
+            int shapeDetail,
+            int colorRgb,
+            boolean tracerEnabled
     ) {
     }
 }
