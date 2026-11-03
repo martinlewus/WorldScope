@@ -1,16 +1,21 @@
 package dev.worldscope;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
-import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
-import com.mojang.blaze3d.platform.InputConstants;
 
 public final class WorldScopeClient implements ClientModInitializer {
     private static KeyMapping openKey;
+    private static boolean showCoordinates = true;
 
     @Override
     public void onInitializeClient() {
@@ -20,28 +25,42 @@ public final class WorldScopeClient implements ClientModInitializer {
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.worldscope.open", InputConstants.Type.KEYSYM, InputConstants.KEY_K, category
         ));
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (openKey.consumeClick()) {
-                if (client.player != null && client.level != null) {
+                if (client.player != null && client.level != null && client.getSingleplayerServer() != null) {
                     client.gui.setScreen(new WorldScopeScreen());
                 }
             }
         });
-        ClientReceiveMessageEvents.GAME.register((message, overlay) ->
-                WorldScopeScreen.receiveGameMessage(message.getString()));
+
+        HudElementRegistry.attachElementBefore(
+                VanillaHudElements.CHAT,
+                Identifier.fromNamespaceAndPath("worldscope", "target_coordinates"),
+                WorldScopeClient::renderTargetHud
+        );
     }
 
-    static void locate(String type, String id) {
+    private static void renderTargetHud(GuiGraphicsExtractor graphics, DeltaTracker tickCounter) {
         Minecraft client = Minecraft.getInstance();
-        if (client.player == null) return;
-        String cleanId = id.trim().toLowerCase();
-        if (cleanId.isEmpty()) return;
-        if (!cleanId.contains(":")) cleanId = "minecraft:" + cleanId;
-        if (!cleanId.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")) {
-            WorldScopeScreen.setStatus("Invalid ID. Use namespace:path");
-            return;
-        }
-        WorldScopeScreen.setStatus("Searching for " + cleanId + "...");
-        client.player.connection.sendCommand("locate " + type + " " + cleanId);
+        WorldScopeResult result = WorldScopeScanner.getActiveResult();
+        if (!showCoordinates || client.player == null || result == null) return;
+
+        String line = result.id() + "  [" + result.minX() + ", " + result.minY() + ", " + result.minZ() + "]";
+        graphics.fill(7, 7, 310, 31, 0xA9000000);
+        graphics.text(client.font, Component.literal("WORLDSCOPE  " + result.dimension()), 13, 11, 0xFF80D8FF);
+        graphics.text(client.font, Component.literal(line), 13, 21, 0xFFFFFFFF);
+    }
+
+    public static boolean isShowingCoordinates() {
+        return showCoordinates;
+    }
+
+    public static void toggleCoordinates() {
+        showCoordinates = !showCoordinates;
+    }
+
+    public static void setCoordinatesVisible(boolean visible) {
+        showCoordinates = visible;
     }
 }
