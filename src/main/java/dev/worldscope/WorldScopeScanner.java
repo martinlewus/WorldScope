@@ -241,7 +241,7 @@ public final class WorldScopeScanner {
         final int[] verticalSamples = buildBiomeHeightSamples(
                 level.getMinY(), level.getMaxY() - 1, originY
         );
-        final Set<BiomeGridPoint> coveredCells = new HashSet<>();
+        final Set<BiomeScanKey> coveredCells = new HashSet<>();
         final List<WorldScopeHit> found = new ArrayList<>();
         AtomicInteger samples = new AtomicInteger();
         boolean sampleLimitReached = false;
@@ -267,7 +267,7 @@ public final class WorldScopeScanner {
                             break outer;
                         }
 
-                        BiomeGridPoint sampleKey = new BiomeGridPoint(x, sampleY >> 2, z);
+                        BiomeScanKey sampleKey = new BiomeScanKey(x, sampleY >> 2, z);
                         if (coveredCells.contains(sampleKey)) continue;
 
                         Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, sampleY >> 2, z >> 2);
@@ -291,7 +291,7 @@ public final class WorldScopeScanner {
                         }
 
                         for (WorldScopeBiomeCell cell : cells) {
-                            coveredCells.add(new BiomeGridPoint(
+                            coveredCells.add(new BiomeScanKey(
                                     cell.minX() + (cell.maxX() - cell.minX()) / 2,
                                     sampleY >> 2,
                                     cell.minZ() + (cell.maxZ() - cell.minZ()) / 2
@@ -486,6 +486,9 @@ public final class WorldScopeScanner {
                         + " nearest placement candidates.";
             } else if (placementBudgetReached) {
                 message = "Found " + found.size() + " results; placement search reached its workload limit.";
+            } else if (found.size() >= MAX_STRUCTURE_RESULTS) {
+                message = "Found " + found.size()
+                        + " results (display limit reached; more may exist in the search radius).";
             } else {
                 message = "Found " + found.size() + " nearest structure result(s).";
             }
@@ -810,7 +813,10 @@ public final class WorldScopeScanner {
     private record ChunkCandidate(int x, int z, long distanceSquared) {
     }
 
-    private record BiomeGridPoint(int x, int y, int z) {
+    private record BiomeGridPoint(int x, int z) {
+    }
+
+    private record BiomeScanKey(int x, int y, int z) {
     }
 
     private record RegionNode(int regionX, int regionZ, long minimumDistanceSquared) {
