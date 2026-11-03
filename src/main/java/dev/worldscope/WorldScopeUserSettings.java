@@ -67,6 +67,38 @@ public final class WorldScopeUserSettings {
         save();
     }
 
+    public static synchronized int getMarqueeSpeedLevel() {
+        load();
+        try {
+            return Math.max(1, Math.min(4,
+                    Integer.parseInt(VALUES.getProperty("marqueeSpeed", "2"))));
+        } catch (NumberFormatException ignored) {
+            return 2;
+        }
+    }
+
+    public static synchronized void setMarqueeSpeedLevel(int level) {
+        load();
+        int safeLevel = Math.max(1, Math.min(4, level));
+        VALUES.setProperty("marqueeSpeed", Integer.toString(safeLevel));
+        save();
+    }
+
+    public static synchronized int cycleMarqueeSpeedLevel() {
+        int next = getMarqueeSpeedLevel() % 4 + 1;
+        setMarqueeSpeedLevel(next);
+        return next;
+    }
+
+    public static synchronized float getMarqueePixelsPerTick() {
+        return switch (getMarqueeSpeedLevel()) {
+            case 1 -> 0.45f;
+            case 2 -> 0.90f;
+            case 3 -> 1.35f;
+            default -> 1.80f;
+        };
+    }
+
     public static synchronized String getSelectedTarget(String mode) {
         load();
         return VALUES.getProperty("selectedTarget." + mode, "");
