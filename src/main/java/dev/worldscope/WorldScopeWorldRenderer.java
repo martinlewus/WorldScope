@@ -77,7 +77,7 @@ public final class WorldScopeWorldRenderer {
                 ? WorldScopeScanner.getActiveBiomeCells() : List.of();
         boxState = new BoxState(
                 result.minX(), result.minY(), result.minZ(),
-                result.maxX() + 1, result.maxY() + 1, result.maxZ() + 1,
+                result.maxX() + 1, result.maxY(), result.maxZ() + 1,
                 biomeCells
         );
     }
