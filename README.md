@@ -1,8 +1,8 @@
-# WorldScope 2.0.2, only for FABRIC 26.2 minecraft
+# WorldScope 2.0.3, only for FABRIC 26.2 minecraft
 
 WorldScope is a **single-player world scanner**. It does not issue vanilla chat commands and does not require cheats or operator permissions.
 
-## Current 2.0.2 foundation
+## Current 2.0.3 foundation
 
 - Press **K** in a single-player world to open the paused WorldScope screen.
 - Browse the world's synced structure and biome registries, including modded registry entries.
