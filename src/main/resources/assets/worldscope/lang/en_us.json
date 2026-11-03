@@ -1,4 +1,6 @@
 {
   "key.category.worldscope.main": "WorldScope",
-  "key.worldscope.open": "Open WorldScope"
+  "key.worldscope.open": "Open WorldScope",
+  "key.worldscope.previous_result": "Previous WorldScope Result",
+  "key.worldscope.next_result": "Next WorldScope Result"
 }
