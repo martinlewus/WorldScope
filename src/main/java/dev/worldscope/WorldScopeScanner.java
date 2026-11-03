@@ -29,8 +29,9 @@ import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement
 
 public final class WorldScopeScanner {
     private static final int HARD_MAX_RADIUS = 10_000;
-    private static final int MAX_STRUCTURE_CANDIDATES = 384;
-    private static final int MAX_BIOME_SAMPLES = 100_000;
+    private static final int MAX_STRUCTURE_CANDIDATES = 1024;
+    private static final int MAX_BIOME_SAMPLES = 750_000;
+    private static final int VERTICAL_BIOME_SAMPLE_STEP = 8;
     private static final int MAX_BIOME_REGION_CELLS = 512;
     private static final int BIOME_SAMPLE_STEP = 48;
 
@@ -132,7 +133,7 @@ public final class WorldScopeScanner {
                 if ("biome".equals(type)) {
                     ACTIVE_BIOME_CELLS.set(traceBiomeRegion(
                             targetLevel, id, cached.centerX(), cached.centerZ(),
-                            originX, originZ, originY, radius
+                            originX, originZ, cached.centerY(), radius
                     ));
                 }
                 client.execute(() -> finish(cached, "Loaded saved location."));
@@ -177,11 +178,17 @@ public final class WorldScopeScanner {
     private static void scanBiome(ServerLevel level, String wantedId, String dimensionId,
                                   int originX, int originY, int originZ, int radius) {
         final int sampleStep = BIOME_SAMPLE_STEP;
-        final int quartY = originY >> 2;
         final long radiusSquared = (long) radius * radius;
+        final int[] verticalSamples = buildBiomeHeightSamples(
+                level.getMinY(), level.getMaxY() - 1, originY
+        );
         AtomicInteger samples = new AtomicInteger();
         WorldScopeResult firstMatch = null;
+        boolean sampleLimitReached = false;
 
+        // Search outward horizontally, but sample the full build-height range at
+        // each horizontal point. This allows underground biomes such as Deep Dark
+        // to be found even when the player is standing at the surface.
         outer:
         for (int ring = 0; ring <= radius; ring += sampleStep) {
             if (CANCELLED.get()) break;
@@ -189,43 +196,57 @@ public final class WorldScopeScanner {
                 for (int dz = -ring; dz <= ring; dz += sampleStep) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) continue;
                     if ((long) dx * dx + (long) dz * dz > radiusSquared) continue;
-                    if (samples.incrementAndGet() > MAX_BIOME_SAMPLES) {
-                        status = "Sample safety limit reached; result coverage is partial.";
-                        break outer;
-                    }
 
                     int x = originX + dx;
                     int z = originZ + dz;
-                    Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, quartY, z >> 2);
-                    String actualId = biome.unwrapKey().map(key -> key.identifier().toString()).orElse("");
-                    completed = samples.get();
-                    total = MAX_BIOME_SAMPLES;
+                    for (int sampleY : verticalSamples) {
+                        if (CANCELLED.get()) break outer;
+                        int checked = samples.incrementAndGet();
+                        if (checked > MAX_BIOME_SAMPLES) {
+                            sampleLimitReached = true;
+                            break outer;
+                        }
 
-                    if (wantedId.equals(actualId)) {
-                        firstMatch = new WorldScopeResult(
-                                "biome", wantedId, dimensionId,
-                                x - sampleStep / 2, level.getMinY(), z - sampleStep / 2,
-                                x + sampleStep / 2, level.getMaxY() - 1, z + sampleStep / 2
-                        );
-                        break outer;
+                        Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, sampleY >> 2, z >> 2);
+                        String actualId = biome.unwrapKey()
+                                .map(key -> key.identifier().toString()).orElse("");
+                        completed = checked;
+                        total = MAX_BIOME_SAMPLES;
+
+                        if (wantedId.equals(actualId)) {
+                            int halfHeight = VERTICAL_BIOME_SAMPLE_STEP;
+                            firstMatch = new WorldScopeResult(
+                                    "biome", wantedId, dimensionId,
+                                    x - sampleStep / 2, Math.max(level.getMinY(), sampleY - halfHeight),
+                                    z - sampleStep / 2,
+                                    x + sampleStep / 2, Math.min(level.getMaxY() - 1, sampleY + halfHeight),
+                                    z + sampleStep / 2
+                            );
+                            break outer;
+                        }
                     }
                 }
             }
         }
 
         if (CANCELLED.get() || firstMatch == null) {
-            WorldScopeResult result = null;
+            String message = CANCELLED.get()
+                    ? "Scan cancelled."
+                    : sampleLimitReached
+                        ? "Biome not found before the scan safety limit. Try a smaller radius."
+                        : "Biome not found in the selected radius at any sampled height.";
             Minecraft.getInstance().execute(() -> {
                 ACTIVE_BIOME_CELLS.set(List.of());
-                finish(result, CANCELLED.get() ? "Scan cancelled." : "Biome not found in the selected radius.");
+                finish(null, message);
             });
             return;
         }
 
         status = "Tracing sampled biome border...";
+        int matchedY = firstMatch.centerY();
         List<WorldScopeBiomeCell> cells = traceBiomeRegion(
                 level, wantedId, firstMatch.centerX(), firstMatch.centerZ(),
-                originX, originZ, originY, radius
+                originX, originZ, matchedY, radius
         );
         ACTIVE_BIOME_CELLS.set(cells);
 
@@ -236,10 +257,25 @@ public final class WorldScopeScanner {
 
         WorldScopeResult result = new WorldScopeResult(
                 "biome", wantedId, dimensionId,
-                minX, level.getMinY(), minZ,
-                maxX, level.getMaxY() - 1, maxZ
+                minX, firstMatch.minY(), minZ,
+                maxX, firstMatch.maxY(), maxZ
         );
-        Minecraft.getInstance().execute(() -> finish(result, "Biome region found; sampled border ready."));
+        Minecraft.getInstance().execute(() -> finish(result, "Biome region found across build height; sampled border ready."));
+    }
+
+    private static int[] buildBiomeHeightSamples(int minY, int maxY, int preferredY) {
+        int centerY = Math.max(minY, Math.min(maxY, preferredY));
+        ArrayList<Integer> samples = new ArrayList<>();
+        for (int offset = 0; centerY - offset >= minY || centerY + offset <= maxY;
+             offset += VERTICAL_BIOME_SAMPLE_STEP) {
+            int below = centerY - offset;
+            int above = centerY + offset;
+            if (below >= minY && !samples.contains(below)) samples.add(below);
+            if (offset != 0 && above <= maxY && !samples.contains(above)) samples.add(above);
+        }
+        if (!samples.contains(minY)) samples.add(minY);
+        if (!samples.contains(maxY)) samples.add(maxY);
+        return samples.stream().mapToInt(Integer::intValue).toArray();
     }
 
     private static List<WorldScopeBiomeCell> traceBiomeRegion(
@@ -355,7 +391,7 @@ public final class WorldScopeScanner {
         }
 
         if (index >= candidates.size()) {
-            finish(null, "No generated start found in the selected radius.");
+            finish(null, "Checked " + candidates.size() + " candidate chunks; no generated start for " + wantedId + " was found in the selected radius.");
             return;
         }
 
