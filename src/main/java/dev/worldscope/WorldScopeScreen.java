@@ -142,6 +142,33 @@ public final class WorldScopeScreen extends Screen {
         status = catalog.size() + " registered " + (mode.equals("structure") ? "structures" : "biomes") + " available.";
     }
 
+    private String selectedVariantLabel() {
+        if (selectedId == null || selectedId.isBlank()) return "No selection";
+        String path = selectedId.substring(selectedId.indexOf(':') + 1).toLowerCase(Locale.ROOT);
+        if (path.startsWith("village_")) {
+            return pretty(path.substring("village_".length())) + " village";
+        }
+        if (path.endsWith("_village")) {
+            return pretty(path.substring(0, path.length() - "_village".length())) + " village";
+        }
+        if (path.equals("desert_pyramid")) return "Desert temple";
+        if (path.equals("jungle_pyramid")) return "Jungle temple";
+        if (path.contains("temple")) return pretty(path);
+        return pretty(path);
+    }
+
+    private String pretty(String value) {
+        String[] words = value.replace('_', ' ').split(" ");
+        StringBuilder label = new StringBuilder();
+        for (String word : words) {
+            if (word.isBlank()) continue;
+            if (!label.isEmpty()) label.append(' ');
+            label.append(Character.toUpperCase(word.charAt(0)));
+            if (word.length() > 1) label.append(word.substring(1));
+        }
+        return label.toString();
+    }
+
     private List<String> filteredCatalog() {
         String query = searchBox == null ? "" : searchBox.getValue().toLowerCase(Locale.ROOT).trim();
         if (query.isEmpty()) return catalog;
@@ -235,13 +262,21 @@ public final class WorldScopeScreen extends Screen {
         graphics.fill(infoLeft + 1, listTop + 1, infoRight - 1, listBottom - 1, 0xFF252525);
         graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 10, listTop + 10, 0xFFFFD76A);
         graphics.text(font, Component.literal(selectedId.isEmpty() ? "Nothing selected" : selectedId), infoLeft + 10, listTop + 26, 0xFFFFFFFF);
-        graphics.text(font, Component.literal("DIMENSION"), infoLeft + 10, listTop + 52, 0xFFFFD76A);
-        graphics.text(font, Component.literal(dimension), infoLeft + 10, listTop + 67, 0xFFFFFFFF);
-        graphics.text(font, Component.literal("SCAN LIMIT"), infoLeft + 10, listTop + 92, 0xFFFFD76A);
-        graphics.text(font, Component.literal("Maximum radius: 10,000 blocks"), infoLeft + 10, listTop + 107, 0xFFE0E0E0);
-        graphics.text(font, Component.literal("Structure scans test placement rules"), infoLeft + 10, listTop + 127, 0xFFBFBFBF);
-        graphics.text(font, Component.literal("and inspect generated structure starts."), infoLeft + 10, listTop + 140, 0xFFBFBFBF);
-        graphics.text(font, Component.literal("Biome scans sample generator biomes."), infoLeft + 10, listTop + 160, 0xFFBFBFBF);
+        graphics.text(font, Component.literal("VARIANT / SUBTYPE"), infoLeft + 10, listTop + 52, 0xFFFFD76A);
+        graphics.text(font, Component.literal(selectedVariantLabel()), infoLeft + 10, listTop + 67, 0xFFFFFFFF);
+        graphics.text(font, Component.literal("DIMENSION"), infoLeft + 10, listTop + 92, 0xFFFFD76A);
+        graphics.text(font, Component.literal(dimension), infoLeft + 10, listTop + 107, 0xFFFFFFFF);
+        graphics.text(font, Component.literal("SCAN LIMIT"), infoLeft + 10, listTop + 132, 0xFFFFD76A);
+        graphics.text(font, Component.literal("Radius: up to 10,000 blocks"), infoLeft + 10, listTop + 147, 0xFFE0E0E0);
+        if (mode.equals("structure")) {
+            graphics.text(font, Component.literal("LOOT INFORMATION"), infoLeft + 10, listTop + 174, 0xFFFFD76A);
+            graphics.text(font, Component.literal("Loot is not inferred from the ID."), infoLeft + 10, listTop + 189, 0xFFBFBFBF);
+            graphics.text(font, Component.literal("Generated chest data needs a later pass."), infoLeft + 10, listTop + 202, 0xFFBFBFBF);
+        } else {
+            graphics.text(font, Component.literal("BIOME BORDER"), infoLeft + 10, listTop + 174, 0xFFFFD76A);
+            graphics.text(font, Component.literal("Gold outline = sampled transition"), infoLeft + 10, listTop + 189, 0xFFBFBFBF);
+            graphics.text(font, Component.literal("at the scan's vertical level."), infoLeft + 10, listTop + 202, 0xFFBFBFBF);
+        }
 
         String scanStatus = WorldScopeScanner.getProgressText();
         graphics.fill(left + 16, top + h - 43, left + w - 16, top + h - 22, 0xFF333333);
