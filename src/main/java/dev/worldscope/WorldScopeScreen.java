@@ -44,7 +44,7 @@ public final class WorldScopeScreen extends Screen {
         panelTop = (height - panelHeight) / 2;
 
         searchBox = new EditBox(font, panelLeft + 16, panelTop + 78, Math.max(150, panelWidth - 260), 20, Component.literal("Search"));
-        searchBox.setHint(Component.literal("Type a name or namespace:id"));
+        searchBox.setHint(Component.literal("Name, ID, village:snowy, or temple:jungle"));
         searchBox.setResponder(value -> scrollOffset = 0);
         addRenderableWidget(searchBox);
 
@@ -173,10 +173,25 @@ public final class WorldScopeScreen extends Screen {
         String query = searchBox == null ? "" : searchBox.getValue().toLowerCase(Locale.ROOT).trim();
         if (query.isEmpty()) return catalog;
 
+        String subtype = "";
+        String term = query;
+        if (mode.equals("structure") && query.startsWith("village:")) {
+            subtype = "village";
+            term = query.substring("village:".length());
+        } else if (mode.equals("structure") && query.startsWith("temple:")) {
+            subtype = "temple";
+            term = query.substring("temple:".length());
+        }
+
         List<String> filtered = new ArrayList<>();
         for (String id : catalog) {
-            String path = id.substring(id.indexOf(':') + 1).replace('_', ' ');
-            if (id.toLowerCase(Locale.ROOT).contains(query) || path.contains(query)) filtered.add(id);
+            String path = id.substring(id.indexOf(':') + 1).toLowerCase(Locale.ROOT);
+            String readable = path.replace('_', ' ');
+            if (subtype.equals("village") && !path.contains("village")) continue;
+            if (subtype.equals("temple") && !(path.contains("temple") || path.contains("pyramid"))) continue;
+            if (term.isEmpty() || id.toLowerCase(Locale.ROOT).contains(term) || readable.contains(term)) {
+                filtered.add(id);
+            }
         }
         return filtered;
     }
