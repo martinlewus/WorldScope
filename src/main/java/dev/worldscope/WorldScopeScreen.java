@@ -135,8 +135,14 @@ public final class WorldScopeScreen extends Screen {
     }
 
     private void rebuildControls() {
+        String previousSearch = searchBox == null ? "" : searchBox.getValue();
+        String previousRadius = radiusBox == null ? "3000" : radiusBox.getValue();
+        String previousStatus = status;
         clearWidgets();
         init();
+        if (searchBox != null) searchBox.setValue(previousSearch);
+        if (radiusBox != null) radiusBox.setValue(previousRadius);
+        status = previousStatus;
     }
 
     private void setMode(String nextMode) {
