@@ -2,6 +2,9 @@ package dev.worldscope;
 
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
@@ -69,9 +72,12 @@ public final class WorldScopeWorldRenderer {
             return;
         }
 
+        List<WorldScopeBiomeCell> biomeCells = "biome".equals(result.type())
+                ? WorldScopeScanner.getActiveBiomeCells() : List.of();
         boxState = new BoxState(
                 result.minX(), result.minY(), result.minZ(),
-                result.maxX() + 1, result.maxY() + 1, result.maxZ() + 1
+                result.maxX() + 1, result.maxY() + 1, result.maxZ() + 1,
+                biomeCells
         );
     }
 
@@ -108,12 +114,55 @@ public final class WorldScopeWorldRenderer {
                 minX, minY, minZ, maxX, maxY, maxZ,
                 0.05f, 0.62f, 0.88f, 0.10f);
         addFrame(matrices.last().pose(), vertices, minX, minY, minZ, maxX, maxY, maxZ);
+        if (!state.biomeCells().isEmpty()) {
+            addBiomeBorders(matrices.last().pose(), vertices, state.biomeCells());
+        }
         matrices.popPose();
 
         BUFFER.upload();
         StagedVertexBuffer.ExecuteInfo info = BUFFER.getExecuteInfo(draw);
         if (info != null) draw(Minecraft.getInstance(), info, THROUGH_WALLS);
         BUFFER.endFrame();
+    }
+
+    private static void addBiomeBorders(Matrix4fc matrix, VertexConsumer vertices, List<WorldScopeBiomeCell> cells) {
+        Set<Long> occupied = new HashSet<>();
+        for (WorldScopeBiomeCell cell : cells) {
+            occupied.add(gridKey(cell.minX(), cell.minZ()));
+        }
+
+        // Gold perimeter segments make the sampled biome transition visible through terrain.
+        for (WorldScopeBiomeCell cell : cells) {
+            float x0 = cell.minX();
+            float z0 = cell.minZ();
+            float x1 = cell.maxX();
+            float z1 = cell.maxZ();
+            float y0 = cell.y() - 0.18f;
+            float y1 = cell.y() + 0.18f;
+            float thickness = 0.10f;
+            float red = 1.0f, green = 0.72f, blue = 0.12f, alpha = 0.98f;
+
+            if (!occupied.contains(gridKey(cell.minX() - 48, cell.minZ()))) {
+                addCuboid(matrix, vertices, x0 - thickness, y0, z0, x0 + thickness, y1, z1,
+                        red, green, blue, alpha);
+            }
+            if (!occupied.contains(gridKey(cell.minX() + 48, cell.minZ()))) {
+                addCuboid(matrix, vertices, x1 - thickness, y0, z0, x1 + thickness, y1, z1,
+                        red, green, blue, alpha);
+            }
+            if (!occupied.contains(gridKey(cell.minX(), cell.minZ() - 48))) {
+                addCuboid(matrix, vertices, x0, y0, z0 - thickness, x1, y1, z0 + thickness,
+                        red, green, blue, alpha);
+            }
+            if (!occupied.contains(gridKey(cell.minX(), cell.minZ() + 48))) {
+                addCuboid(matrix, vertices, x0, y0, z1 - thickness, x1, y1, z1 + thickness,
+                        red, green, blue, alpha);
+            }
+        }
+    }
+
+    private static long gridKey(int x, int z) {
+        return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
     private static void addFrame(Matrix4fc matrix, VertexConsumer vertices,
@@ -204,6 +253,6 @@ public final class WorldScopeWorldRenderer {
         }
     }
 
-    private record BoxState(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+    private record BoxState(float minX, float minY, float minZ, float maxX, float maxY, float maxZ, List<WorldScopeBiomeCell> biomeCells) {
     }
 }

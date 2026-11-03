@@ -1,5 +1,6 @@
 package dev.worldscope;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -30,6 +31,8 @@ public final class WorldScopeScanner {
     private static final int HARD_MAX_RADIUS = 10_000;
     private static final int MAX_STRUCTURE_CANDIDATES = 384;
     private static final int MAX_BIOME_SAMPLES = 100_000;
+    private static final int MAX_BIOME_REGION_CELLS = 512;
+    private static final int BIOME_SAMPLE_STEP = 48;
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "WorldScope-Scanner");
@@ -39,6 +42,7 @@ public final class WorldScopeScanner {
 
     private static final AtomicBoolean CANCELLED = new AtomicBoolean(false);
     private static final AtomicReference<WorldScopeResult> ACTIVE_RESULT = new AtomicReference<>();
+    private static final AtomicReference<List<WorldScopeBiomeCell>> ACTIVE_BIOME_CELLS = new AtomicReference<>(List.of());
     private static volatile boolean running;
     private static volatile String status = "Ready.";
     private static volatile int completed;
@@ -65,8 +69,13 @@ public final class WorldScopeScanner {
         return ACTIVE_RESULT.get();
     }
 
+    public static List<WorldScopeBiomeCell> getActiveBiomeCells() {
+        return ACTIVE_BIOME_CELLS.get();
+    }
+
     public static void clearResult() {
         ACTIVE_RESULT.set(null);
+        ACTIVE_BIOME_CELLS.set(List.of());
         status = "Result cleared.";
     }
 
@@ -111,6 +120,7 @@ public final class WorldScopeScanner {
 
         CANCELLED.set(false);
         ACTIVE_RESULT.set(null);
+        ACTIVE_BIOME_CELLS.set(List.of());
         running = true;
         completed = 0;
         total = 0;
@@ -119,6 +129,12 @@ public final class WorldScopeScanner {
         WORKER.execute(() -> {
             WorldScopeResult cached = WorldScopeCache.load(worldSeed, dimensionId, type, id);
             if (cached != null && isInsideRadius(cached, originX, originZ, radius)) {
+                if ("biome".equals(type)) {
+                    ACTIVE_BIOME_CELLS.set(traceBiomeRegion(
+                            targetLevel, id, cached.centerX(), cached.centerZ(),
+                            originX, originZ, originY, radius
+                    ));
+                }
                 client.execute(() -> finish(cached, "Loaded saved location."));
                 return;
             }
@@ -161,11 +177,11 @@ public final class WorldScopeScanner {
 
     private static void scanBiome(ServerLevel level, String wantedId, String dimensionId,
                                   int originX, int originY, int originZ, int radius) {
-        final int sampleStep = 48;
+        final int sampleStep = BIOME_SAMPLE_STEP;
         final int quartY = originY >> 2;
-        final int radiusSquared = radius * radius;
+        final long radiusSquared = (long) radius * radius;
         AtomicInteger samples = new AtomicInteger();
-        WorldScopeResult found = null;
+        WorldScopeResult firstMatch = null;
 
         outer:
         for (int ring = 0; ring <= radius; ring += sampleStep) {
@@ -184,10 +200,10 @@ public final class WorldScopeScanner {
                     Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, quartY, z >> 2);
                     String actualId = biome.unwrapKey().map(key -> key.identifier().toString()).orElse("");
                     completed = samples.get();
-                    total = Math.min(MAX_BIOME_SAMPLES, ((radius * 2 / sampleStep) + 1) * ((radius * 2 / sampleStep) + 1));
+                    total = MAX_BIOME_SAMPLES;
 
                     if (wantedId.equals(actualId)) {
-                        found = new WorldScopeResult(
+                        firstMatch = new WorldScopeResult(
                                 "biome", wantedId, dimensionId,
                                 x - sampleStep / 2, level.getMinY(), z - sampleStep / 2,
                                 x + sampleStep / 2, level.getMaxY() - 1, z + sampleStep / 2
@@ -198,8 +214,80 @@ public final class WorldScopeScanner {
             }
         }
 
-        WorldScopeResult result = found;
-        Minecraft.getInstance().execute(() -> finish(result, "biome"));
+        if (CANCELLED.get() || firstMatch == null) {
+            WorldScopeResult result = null;
+            Minecraft.getInstance().execute(() -> {
+                ACTIVE_BIOME_CELLS.set(List.of());
+                finish(result, CANCELLED.get() ? "Scan cancelled." : "Biome not found in the selected radius.");
+            });
+            return;
+        }
+
+        status = "Tracing sampled biome border...";
+        List<WorldScopeBiomeCell> cells = traceBiomeRegion(
+                level, wantedId, firstMatch.centerX(), firstMatch.centerZ(),
+                originX, originZ, originY, radius
+        );
+        ACTIVE_BIOME_CELLS.set(cells);
+
+        int minX = cells.stream().mapToInt(WorldScopeBiomeCell::minX).min().orElse(firstMatch.minX());
+        int minZ = cells.stream().mapToInt(WorldScopeBiomeCell::minZ).min().orElse(firstMatch.minZ());
+        int maxX = cells.stream().mapToInt(WorldScopeBiomeCell::maxX).max().orElse(firstMatch.maxX());
+        int maxZ = cells.stream().mapToInt(WorldScopeBiomeCell::maxZ).max().orElse(firstMatch.maxZ());
+
+        WorldScopeResult result = new WorldScopeResult(
+                "biome", wantedId, dimensionId,
+                minX, level.getMinY(), minZ,
+                maxX, level.getMaxY() - 1, maxZ
+        );
+        Minecraft.getInstance().execute(() -> finish(result, "Biome region found; sampled border ready."));
+    }
+
+    private static List<WorldScopeBiomeCell> traceBiomeRegion(
+            ServerLevel level,
+            String wantedId,
+            int seedX,
+            int seedZ,
+            int originX,
+            int originZ,
+            int sampleY,
+            int radius
+    ) {
+        ArrayList<WorldScopeBiomeCell> cells = new ArrayList<>();
+        ArrayDeque<BiomeGridPoint> queue = new ArrayDeque<>();
+        HashSet<Long> visited = new HashSet<>();
+        int quartY = sampleY >> 2;
+        long radiusSquared = (long) radius * radius;
+
+        queue.add(new BiomeGridPoint(seedX, seedZ));
+        while (!queue.isEmpty() && cells.size() < MAX_BIOME_REGION_CELLS && !CANCELLED.get()) {
+            BiomeGridPoint point = queue.removeFirst();
+            long dx = (long) point.x() - originX;
+            long dz = (long) point.z() - originZ;
+            if (dx * dx + dz * dz > radiusSquared) continue;
+
+            long key = (((long) point.x()) << 32) ^ (point.z() & 0xffffffffL);
+            if (!visited.add(key)) continue;
+
+            Holder<?> biome = level.getUncachedNoiseBiome(point.x() >> 2, quartY, point.z() >> 2);
+            String actualId = biome.unwrapKey().map(resourceKey -> resourceKey.identifier().toString()).orElse("");
+            completed++;
+            if (!wantedId.equals(actualId)) continue;
+
+            int half = BIOME_SAMPLE_STEP / 2;
+            cells.add(new WorldScopeBiomeCell(
+                    point.x() - half, point.z() - half,
+                    point.x() + half, point.z() + half,
+                    sampleY
+            ));
+
+            queue.addLast(new BiomeGridPoint(point.x() - BIOME_SAMPLE_STEP, point.z()));
+            queue.addLast(new BiomeGridPoint(point.x() + BIOME_SAMPLE_STEP, point.z()));
+            queue.addLast(new BiomeGridPoint(point.x(), point.z() - BIOME_SAMPLE_STEP));
+            queue.addLast(new BiomeGridPoint(point.x(), point.z() + BIOME_SAMPLE_STEP));
+        }
+
+        return List.copyOf(cells);
     }
 
     private static void prepareStructureScan(Minecraft client, ServerLevel level, String wantedId,
