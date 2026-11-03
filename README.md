@@ -1,31 +1,39 @@
-# WorldScope 2.0.7 — Fabric 26.2
+# WorldScope 2.0.8 — Fabric 26.2
 
 WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
-## 2.0.7 changes
+## 2.0.8 changes
 
-- Long status/progress messages at the bottom of the scanner screen now scroll horizontally instead of being truncated with an ellipsis.
-- Left and Right arrow keys navigate to the previous/next scan result, matching the on-screen arrows. When the search/radius text field is focused, arrow keys remain available for text editing. Selecting an entry in the registry list leaves the search field unfocused so result navigation works immediately.
-- Structure ESP keeps a visible overall bounding outline at every Shape Detail setting. Generated piece bounds are drawn over it when available, so structures with incomplete piece lists from a reference chunk still retain a visible target marker.
+- Left and Right arrow keys are registered as Minecraft keybinds and navigate to the previous/next result during normal gameplay when the WorldScope screen is closed. The same keys still work inside the WorldScope screen when a text field is not focused.
+- The status bar waits two seconds after a new message, then scrolls smoothly from right to left using subpixel movement at a slower speed. Long messages remain clipped to the status bar rather than being truncated.
+- Structure candidates now come from `ChunkGeneratorStructureState.getPlacementsForStructure` for the selected structure in the active dimension. This avoids scanning unrelated structure sets that are not valid for that dimension.
+- Random-spread candidates use `ChunkGeneratorStructureState.getLevelSeed`, the exact seed held by Minecraft's structure generator state, rather than re-reading the world options seed.
+- Native presence diagnostics now describe `START_NOT_PRESENT` candidates as candidates ruled out by Minecraft's placement/biome checks, rather than implying a known generated structure was deleted.
 
-## Features retained
+## Features
 
-- Native Minecraft structure-presence checks before candidate chunk loading, followed by verification of the generated structure start.
-- Multiple nearby structure and biome results with previous/next navigation.
-- Shape Detail 1–8, structure-piece outlines and higher-resolution sampled biome borders.
-- Maximum search distance from 128 to 10,000,000 blocks, with workload caps and explicit partial-scan reporting.
-- Selected targets and scan radius saved in `config/worldscope/settings.properties`.
-- Single-player only; no `/locate` command and no multiplayer scanning.
+- Browse registered structures and biomes, including modded registry entries.
+- Search the catalog and use village/temple subtype filters.
+- Select Overworld, Nether, or End.
+- Maximum search radius from 128 to 10,000,000 blocks, with workload limits and partial-scan reporting.
+- Native Minecraft structure-presence checks followed by actual `STRUCTURE_STARTS` chunk verification.
+- Up to 128 structure results and 128 sampled biome regions, sorted by distance, with menu and in-game keyboard navigation.
+- Shape Detail 1–8, individual structure-piece outlines and sampled biome borders.
+- Search radius and selected targets saved in `config/worldscope/settings.properties`.
+- Through-wall ESP, coordinates HUD, and proximity alerts.
 
-## Notes
+## Accuracy and limits
 
-- Structure piece bounding boxes are approximate layout outlines, not block-perfect voxel meshes.
-- Biome borders remain sampled approximations.
-- The 10,000,000-block radius is a configurable maximum, not a guarantee that the entire area can be fully scanned in one pass. Candidate and sample budgets still apply.
+- Structure placement candidates are dimension-specific. The native presence checker rules out candidates that fail Minecraft's placement or biome checks; a rejected candidate is not treated as a confirmed structure.
+- Structure searches remain workload bounded: up to 1,000,000 placement-region tests per placement, 4,096 candidates per placement, 8,192 aggregate candidate chunks, and 128 displayed results.
+- Biome scans are multi-height sampled approximations with a 750,000-sample budget and 128 displayed regions.
+- Structure-piece boxes are approximate layout bounds, not block-perfect voxel meshes.
+- A 10,000,000-block radius is accepted but cannot guarantee full coverage in one pass when workload caps are reached.
+- WorldScope is single-player only and does not issue `/locate`.
 
 ## Installation
 
-Place `worldscope-2.0.7.jar` in `.minecraft/mods` and remove older WorldScope JARs.
+Place `worldscope-2.0.8.jar` in `.minecraft/mods` and remove older WorldScope JARs.
 
 ## Build
 
