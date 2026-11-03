@@ -147,13 +147,14 @@ public final class WorldScopeScreen extends Screen {
         infoRight = left + w - (compactUi ? 12 : 16);
 
         refreshCatalog();
+        restoreSavedTarget();
         addResultNavigationControls();
         createInfoControls();
     }
 
     private EditBox createRadiusBox(int x, int y, int boxWidth, int boxHeight) {
         EditBox box = new EditBox(font, x, y, boxWidth, boxHeight, Component.literal("Maximum search distance"));
-        box.setValue("3000");
+        box.setValue(Integer.toString(WorldScopeUserSettings.getSearchRadius()));
         box.setMaxLength(8);
         box.setResponder(value -> {
             String digits = value.replaceAll("[^0-9]", "");
@@ -166,6 +167,12 @@ public final class WorldScopeScreen extends Screen {
                 digits = "3000";
             }
             if (!digits.equals(value)) box.setValue(digits);
+            try {
+                int parsed = Integer.parseInt(digits);
+                if (parsed >= 128) WorldScopeUserSettings.setSearchRadius(parsed);
+            } catch (NumberFormatException ignored) {
+                // An incomplete edit is saved once it becomes a valid radius.
+            }
         });
         return box;
     }
@@ -182,11 +189,11 @@ public final class WorldScopeScreen extends Screen {
         int infoWidth = Math.max(1, infoRight - infoLeft);
         if (compactUi) {
             addRenderableWidget(new ShapeDetailSlider(
-                    infoLeft + 8, listBottom - 72, Math.max(70, infoWidth - 16), 18,
+                    infoLeft + 8, listBottom - 88, Math.max(70, infoWidth - 16), 18,
                     WorldScopeScanner.getShapeDetail()
             ));
 
-            int toggleY = listBottom - 46;
+            int toggleY = listBottom - 56;
             addRenderableWidget(Button.builder(Component.literal("ESP: " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleEsp();
@@ -201,17 +208,17 @@ public final class WorldScopeScreen extends Screen {
                         rebuildControls();
                     }).bounds(infoLeft + 74, toggleY, Math.min(76, Math.max(58, infoWidth - 82)), 18).build());
 
-            EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 8, listBottom - 24, 46, 18);
+            EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 8, listBottom - 27, 46, 18);
             addRenderableWidget(alertRadiusBox);
             addRenderableWidget(Button.builder(Component.literal("SET"), button -> setAlertRange(alertRadiusBox))
-                    .bounds(infoLeft + 112, listBottom - 24, Math.min(42, Math.max(32, infoWidth - 120)), 18).build());
+                    .bounds(infoLeft + 112, listBottom - 27, Math.min(42, Math.max(32, infoWidth - 120)), 18).build());
         } else {
             addRenderableWidget(new ShapeDetailSlider(
-                    infoLeft + 10, listBottom - 78, Math.max(90, infoWidth - 20), 20,
+                    infoLeft + 10, listBottom - 90, Math.max(90, infoWidth - 20), 20,
                     WorldScopeScanner.getShapeDetail()
             ));
 
-            int toggleY = listBottom - 52;
+            int toggleY = listBottom - 58;
             addRenderableWidget(Button.builder(Component.literal("ESP: " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleEsp();
@@ -226,10 +233,10 @@ public final class WorldScopeScreen extends Screen {
                         rebuildControls();
                     }).bounds(infoLeft + 94, toggleY, 92, 20).build());
 
-            EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 10, listBottom - 25, 64, 20);
+            EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 10, listBottom - 27, 64, 20);
             addRenderableWidget(alertRadiusBox);
             addRenderableWidget(Button.builder(Component.literal("SET ALERT RANGE"), button -> setAlertRange(alertRadiusBox))
-                    .bounds(infoLeft + 82, listBottom - 25, Math.min(112, Math.max(88, infoWidth - 92)), 20).build());
+                    .bounds(infoLeft + 82, listBottom - 27, Math.min(112, Math.max(88, infoWidth - 92)), 20).build());
         }
     }
 
@@ -270,6 +277,16 @@ public final class WorldScopeScreen extends Screen {
         if (searchBox != null) searchBox.setValue(previousSearch);
         if (radiusBox != null) radiusBox.setValue(previousRadius);
         status = previousStatus;
+    }
+
+    private void restoreSavedTarget() {
+        String remembered = WorldScopeUserSettings.getSelectedTarget(mode);
+        if (remembered != null && !remembered.isBlank() && catalog.contains(remembered)) {
+            selectedId = remembered;
+            if (searchBox != null) searchBox.setValue(remembered);
+        } else if (selectedId != null && !selectedId.isBlank() && !catalog.contains(selectedId)) {
+            selectedId = "";
+        }
     }
 
     private void setMode(String nextMode) {
@@ -316,28 +333,6 @@ public final class WorldScopeScreen extends Screen {
         if (catalog.isEmpty()) {
             status = "The " + mode + " registry returned no entries. Check the world or mod registry setup.";
         }
-    }
-
-    private String selectedVariantLabel() {
-        if (selectedId == null || selectedId.isBlank()) return "No selection";
-        String path = selectedId.substring(selectedId.indexOf(':') + 1).toLowerCase(Locale.ROOT);
-        if (path.startsWith("village_")) return pretty(path.substring("village_".length())) + " village";
-        if (path.endsWith("_village")) return pretty(path.substring(0, path.length() - "_village".length()) + " village");
-        if (path.equals("desert_pyramid")) return "Desert temple";
-        if (path.equals("jungle_pyramid")) return "Jungle temple";
-        return pretty(path);
-    }
-
-    private String pretty(String value) {
-        String[] words = value.replace('_', ' ').split(" ");
-        StringBuilder label = new StringBuilder();
-        for (String word : words) {
-            if (word.isBlank()) continue;
-            if (label.length() > 0) label.append(' ');
-            label.append(Character.toUpperCase(word.charAt(0)));
-            if (word.length() > 1) label.append(word.substring(1));
-        }
-        return label.toString();
     }
 
     private List<String> filteredCatalog() {
@@ -395,6 +390,8 @@ public final class WorldScopeScreen extends Screen {
         }
         radius = Math.max(128, Math.min(MAX_SEARCH_DISTANCE, radius));
         radiusBox.setValue(Integer.toString(radius));
+        WorldScopeUserSettings.setSearchRadius(radius);
+        WorldScopeUserSettings.setSelectedTarget(mode, target);
 
         selectedId = target;
         status = "Starting scan for " + target + "...";
@@ -454,12 +451,11 @@ public final class WorldScopeScreen extends Screen {
         drawDimensionButtons(graphics, mouseX, mouseY);
 
         if (compactUi) {
-            int radiusX = left + w - 12 - 76 - 6 - 60;
-            graphics.text(font, Component.literal("MAX DISTANCE (BLOCKS)"), radiusX, top + 108, 0xFF555555);
+            int radiusX = left + w - 12 - 76 - 6 - 68;
+            graphics.text(font, Component.literal("128–10,000,000 BLOCKS"), radiusX, top + 108, 0xFF555555);
         } else {
-            graphics.text(font, Component.literal("MAX SEARCH DISTANCE (BLOCKS)"),
+            graphics.text(font, Component.literal("MAX DISTANCE  (MIN 128 / MAX 10,000,000 BLOCKS)"),
                     left + w - 224, top + 65, 0xFF404040);
-            graphics.text(font, Component.literal("128–10,000,000"), left + w - 224, top + 105, 0xFF555555);
         }
 
         int listHeight = Math.max(1, listBottom - listTop);
@@ -496,9 +492,7 @@ public final class WorldScopeScreen extends Screen {
             graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 8, listTop + 7, 0xFFFFD76A);
             graphics.text(font, Component.literal(fitText(selectedId.isEmpty() ? "Nothing selected" : selectedId, infoWidth - 16)),
                     infoLeft + 8, listTop + 21, 0xFFFFFFFF);
-            graphics.text(font, Component.literal(resultCounterText()), infoLeft + 8, listTop + 37, 0xFFB8B8B8);
-            graphics.text(font, Component.literal(fitText("VARIANT: " + selectedVariantLabel(), infoWidth - 16)),
-                    infoLeft + 8, listTop + 52, 0xFFFFD76A);
+            graphics.text(font, Component.literal(resultCounterText()), infoLeft + 8, listTop + 39, 0xFFB8B8B8);
             graphics.text(font, Component.literal("BLOCKS"), infoLeft + 58, listBottom - 17, 0xFFE0E0E0);
         } else {
             graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 10, listTop + 10, 0xFFFFD76A);
@@ -506,24 +500,20 @@ public final class WorldScopeScreen extends Screen {
                     infoLeft + 10, listTop + 26, 0xFFFFFFFF);
             graphics.text(font, Component.literal(resultCounterText()), infoLeft + 10, listTop + 42, 0xFFB8B8B8);
 
-            graphics.text(font, Component.literal("VARIANT / SUBTYPE"), infoLeft + 10, listTop + 59, 0xFFFFD76A);
-            graphics.text(font, Component.literal(fitText(selectedVariantLabel(), infoWidth - 20)),
-                    infoLeft + 10, listTop + 74, 0xFFFFFFFF);
+            graphics.text(font, Component.literal("DIMENSION"), infoLeft + 10, listTop + 66, 0xFFFFD76A);
+            graphics.text(font, Component.literal(dimension), infoLeft + 10, listTop + 81, 0xFFFFFFFF);
 
-            graphics.text(font, Component.literal("DIMENSION"), infoLeft + 10, listTop + 94, 0xFFFFD76A);
-            graphics.text(font, Component.literal(dimension), infoLeft + 10, listTop + 109, 0xFFFFFFFF);
-
-            graphics.text(font, Component.literal("MAX SEARCH DISTANCE"), infoLeft + 10, listTop + 128, 0xFFFFD76A);
-            graphics.text(font, Component.literal("Up to 10,000,000 blocks"), infoLeft + 10, listTop + 143, 0xFFE0E0E0);
+            graphics.text(font, Component.literal("SEARCH RANGE"), infoLeft + 10, listTop + 103, 0xFFFFD76A);
+            graphics.text(font, Component.literal("128 to 10,000,000 blocks"), infoLeft + 10, listTop + 118, 0xFFE0E0E0);
 
             if (mode.equals("structure")) {
-                graphics.text(font, Component.literal("STRUCTURE SHAPE"), infoLeft + 10, listTop + 162, 0xFFFFD76A);
-                graphics.text(font, Component.literal("Piece bounds approximate the generated layout."),
-                        infoLeft + 10, listTop + 177, 0xFFBFBFBF);
+                graphics.text(font, Component.literal("STRUCTURE SHAPE"), infoLeft + 10, listTop + 141, 0xFFFFD76A);
+                graphics.text(font, Component.literal("Piece bounds approximate the layout."),
+                        infoLeft + 10, listTop + 156, 0xFFBFBFBF);
             } else {
-                graphics.text(font, Component.literal("BIOME BORDER"), infoLeft + 10, listTop + 162, 0xFFFFD76A);
-                graphics.text(font, Component.literal("Higher detail samples a finer biome edge."),
-                        infoLeft + 10, listTop + 177, 0xFFBFBFBF);
+                graphics.text(font, Component.literal("BIOME BORDER"), infoLeft + 10, listTop + 141, 0xFFFFD76A);
+                graphics.text(font, Component.literal("Higher detail samples a finer edge."),
+                        infoLeft + 10, listTop + 156, 0xFFBFBFBF);
             }
         }
 
@@ -572,6 +562,7 @@ public final class WorldScopeScreen extends Screen {
                 List<String> visible = filteredCatalog();
                 if (row >= 0 && index >= 0 && index < visible.size()) {
                     selectedId = visible.get(index);
+                    WorldScopeUserSettings.setSelectedTarget(mode, selectedId);
                     searchBox.setValue(selectedId);
                     searchBox.setFocused(true);
                     status = "Selected " + selectedId + ". Press SCAN to search.";
