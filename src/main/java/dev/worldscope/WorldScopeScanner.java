@@ -59,6 +59,8 @@ public final class WorldScopeScanner {
     private static volatile int completed;
     private static volatile int total;
     private static volatile int shapeDetail = 1;
+    private static volatile int searchOriginX;
+    private static volatile int searchOriginZ;
 
     private WorldScopeScanner() {
     }
@@ -183,6 +185,8 @@ public final class WorldScopeScanner {
         double[] center = getSearchCenter(client, dimension);
         int originX = (int) Math.floor(center[0]);
         int originZ = (int) Math.floor(center[1]);
+        searchOriginX = originX;
+        searchOriginZ = originZ;
         int originY = Math.max(targetLevel.getMinY(),
                 Math.min(targetLevel.getMaxY() - 1, client.player.blockPosition().getY()));
         long worldSeed = server.getWorldGenSettings().options().seed();
@@ -769,6 +773,14 @@ public final class WorldScopeScanner {
         return (((long) x) << 32) ^ (z & 0xffffffffL);
     }
 
+    private static long distanceToResultSquared(WorldScopeResult result, int originX, int originZ) {
+        long dx = Math.max(Math.max((long) result.minX() - originX, 0L),
+                (long) originX - (result.maxX() + 1L));
+        long dz = Math.max(Math.max((long) result.minZ() - originZ, 0L),
+                (long) originZ - (result.maxZ() + 1L));
+        return squaredDistance(dx, dz);
+    }
+
     private static void finish(WorldScopeResult result, String message) {
         if (result == null) {
             finishHits(List.of(), message);
@@ -780,7 +792,10 @@ public final class WorldScopeScanner {
     }
 
     private static void finishHits(List<WorldScopeHit> hits, String message) {
-        List<WorldScopeHit> immutableHits = List.copyOf(hits);
+        ArrayList<WorldScopeHit> orderedHits = new ArrayList<>(hits);
+        orderedHits.sort(Comparator.comparingLong(hit ->
+                distanceToResultSquared(hit.result(), searchOriginX, searchOriginZ)));
+        List<WorldScopeHit> immutableHits = List.copyOf(orderedHits);
         ACTIVE_HITS.set(immutableHits);
         ACTIVE_RESULT_INDEX.set(0);
         running = false;
