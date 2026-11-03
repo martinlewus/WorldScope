@@ -12,6 +12,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.client.input.MouseButtonEvent;
 
 public final class WorldScopeScreen extends Screen {
     private static final String OVERWORLD = "minecraft:overworld";
@@ -49,7 +50,6 @@ public final class WorldScopeScreen extends Screen {
 
         radiusBox = new EditBox(font, panelLeft + panelWidth - 224, panelTop + 78, 92, 20, Component.literal("Radius"));
         radiusBox.setValue("3000");
-        radiusBox.setFilter(value -> value.isEmpty() || value.matches("\\d{1,5}"));
         addRenderableWidget(radiusBox);
 
         addRenderableWidget(Button.builder(Component.literal("SCAN"), button -> startScan())
@@ -101,7 +101,7 @@ public final class WorldScopeScreen extends Screen {
             if (mode.equals("structure")) {
                 var registry = client.level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
                 registry.listElements().forEach(holder ->
-                        holder.unwrapKey().ifPresent(key -> catalog.add(key.location().toString())));
+                        holder.unwrapKey().ifPresent(key -> catalog.add(key.identifier().toString())));
             } else {
                 var registry = client.level.registryAccess().lookupOrThrow(Registries.BIOME);
                 registry.listElements().forEach(holder ->
@@ -240,7 +240,7 @@ public final class WorldScopeScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {\n        double mouseX = event.x();\n        double mouseY = event.y();\n        int button = event.button();
         int listLeft = panelLeft + 16;
         int listTop = panelTop + 116;
         int listWidth = Math.max(220, (panelWidth - 48) / 2);
@@ -256,7 +256,7 @@ public final class WorldScopeScreen extends Screen {
                 return true;
             }
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(event, doubleClick);
     }
 
     @Override
