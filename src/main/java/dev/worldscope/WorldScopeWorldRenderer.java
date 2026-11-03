@@ -246,8 +246,11 @@ public final class WorldScopeWorldRenderer {
             float z0 = cell.minZ();
             float x1 = cell.maxX();
             float z1 = cell.maxZ();
-            float y0 = cell.y() - 0.18f;
-            float y1 = cell.y() + 0.18f;
+            // The scanner now traces the biome's vertical extent at each
+            // horizontal sample, so this is a real column boundary rather than
+            // a nearly-flat line around one sampled Y coordinate.
+            float y0 = cell.minY();
+            float y1 = cell.maxY();
             float thickness = 0.10f;
             float alpha = 0.98f;
 
