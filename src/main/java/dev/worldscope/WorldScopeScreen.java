@@ -472,8 +472,6 @@ public final class WorldScopeScreen extends Screen {
                     infoLeft + 8, listTop + 21, 0xFFFFFFFF);
             graphics.text(font, Component.literal(fitText("VARIANT: " + selectedVariantLabel(), infoWidth - 16)),
                     infoLeft + 8, listTop + 40, 0xFFFFD76A);
-            graphics.text(font, Component.literal(fitText("DIM: " + dimension, infoWidth - 16)),
-                    infoLeft + 8, listTop + 55, 0xFFE0E0E0);
             graphics.text(font, Component.literal("BLOCKS"), infoLeft + 58, listBottom - 17, 0xFFE0E0E0);
         } else {
             graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 10, listTop + 10, 0xFFFFD76A);
