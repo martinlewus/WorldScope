@@ -7,6 +7,7 @@ import java.util.Locale;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -18,7 +19,7 @@ public final class WorldScopeScreen extends Screen {
     private static final String OVERWORLD = "minecraft:overworld";
     private static final String NETHER = "minecraft:the_nether";
     private static final String END = "minecraft:the_end";
-    private static final int MAX_SEARCH_DISTANCE = 10_000;
+    private static final int MAX_SEARCH_DISTANCE = 10_000_000;
 
     private EditBox searchBox;
     private EditBox radiusBox;
@@ -84,7 +85,7 @@ public final class WorldScopeScreen extends Screen {
 
             int searchY = top + 84;
             int scanWidth = 76;
-            int radiusWidth = 60;
+            int radiusWidth = 68;
             int radiusX = left + w - 12 - scanWidth - 6 - radiusWidth;
             searchBox = new EditBox(font, left + 12, searchY, Math.max(90, radiusX - left - 20), 20,
                     Component.literal("Search registry"));
@@ -146,16 +147,17 @@ public final class WorldScopeScreen extends Screen {
         infoRight = left + w - (compactUi ? 12 : 16);
 
         refreshCatalog();
+        addResultNavigationControls();
         createInfoControls();
     }
 
     private EditBox createRadiusBox(int x, int y, int boxWidth, int boxHeight) {
         EditBox box = new EditBox(font, x, y, boxWidth, boxHeight, Component.literal("Maximum search distance"));
         box.setValue("3000");
-        box.setMaxLength(5);
+        box.setMaxLength(8);
         box.setResponder(value -> {
             String digits = value.replaceAll("[^0-9]", "");
-            if (digits.length() > 5) digits = digits.substring(0, 5);
+            if (digits.length() > 8) digits = digits.substring(0, 8);
             try {
                 if (!digits.isEmpty() && Integer.parseInt(digits) > MAX_SEARCH_DISTANCE) {
                     digits = Integer.toString(MAX_SEARCH_DISTANCE);
@@ -168,9 +170,22 @@ public final class WorldScopeScreen extends Screen {
         return box;
     }
 
+    private void addResultNavigationControls() {
+        int arrowY = listTop + 4;
+        addRenderableWidget(Button.builder(Component.literal("<"), button -> WorldScopeScanner.previousResult())
+                .bounds(infoRight - 48, arrowY, 20, 18).build());
+        addRenderableWidget(Button.builder(Component.literal(">"), button -> WorldScopeScanner.nextResult())
+                .bounds(infoRight - 24, arrowY, 20, 18).build());
+    }
+
     private void createInfoControls() {
         int infoWidth = Math.max(1, infoRight - infoLeft);
         if (compactUi) {
+            addRenderableWidget(new ShapeDetailSlider(
+                    infoLeft + 8, listBottom - 72, Math.max(70, infoWidth - 16), 18,
+                    WorldScopeScanner.getShapeDetail()
+            ));
+
             int toggleY = listBottom - 46;
             addRenderableWidget(Button.builder(Component.literal("ESP: " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
                     button -> {
@@ -191,6 +206,11 @@ public final class WorldScopeScreen extends Screen {
             addRenderableWidget(Button.builder(Component.literal("SET"), button -> setAlertRange(alertRadiusBox))
                     .bounds(infoLeft + 112, listBottom - 24, Math.min(42, Math.max(32, infoWidth - 120)), 18).build());
         } else {
+            addRenderableWidget(new ShapeDetailSlider(
+                    infoLeft + 10, listBottom - 78, Math.max(90, infoWidth - 20), 20,
+                    WorldScopeScanner.getShapeDetail()
+            ));
+
             int toggleY = listBottom - 52;
             addRenderableWidget(Button.builder(Component.literal("ESP: " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
                     button -> {
@@ -381,6 +401,12 @@ public final class WorldScopeScreen extends Screen {
         WorldScopeScanner.startScan(mode, target, dimension, radius);
     }
 
+    private String resultCounterText() {
+        int count = WorldScopeScanner.getResultCount();
+        int selected = WorldScopeScanner.getSelectedResultNumber();
+        return count == 0 ? "NO RESULTS YET" : "RESULT " + selected + " / " + count;
+    }
+
     private String fitText(String value, int maxWidth) {
         if (value == null || value.isEmpty() || maxWidth <= 0) return "";
         if (font.width(value) <= maxWidth) return value;
@@ -433,7 +459,7 @@ public final class WorldScopeScreen extends Screen {
         } else {
             graphics.text(font, Component.literal("MAX SEARCH DISTANCE (BLOCKS)"),
                     left + w - 224, top + 65, 0xFF404040);
-            graphics.text(font, Component.literal("128–10,000"), left + w - 224, top + 105, 0xFF555555);
+            graphics.text(font, Component.literal("128–10,000,000"), left + w - 224, top + 105, 0xFF555555);
         }
 
         int listHeight = Math.max(1, listBottom - listTop);
@@ -470,32 +496,34 @@ public final class WorldScopeScreen extends Screen {
             graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 8, listTop + 7, 0xFFFFD76A);
             graphics.text(font, Component.literal(fitText(selectedId.isEmpty() ? "Nothing selected" : selectedId, infoWidth - 16)),
                     infoLeft + 8, listTop + 21, 0xFFFFFFFF);
+            graphics.text(font, Component.literal(resultCounterText()), infoLeft + 8, listTop + 37, 0xFFB8B8B8);
             graphics.text(font, Component.literal(fitText("VARIANT: " + selectedVariantLabel(), infoWidth - 16)),
-                    infoLeft + 8, listTop + 40, 0xFFFFD76A);
+                    infoLeft + 8, listTop + 52, 0xFFFFD76A);
             graphics.text(font, Component.literal("BLOCKS"), infoLeft + 58, listBottom - 17, 0xFFE0E0E0);
         } else {
             graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 10, listTop + 10, 0xFFFFD76A);
             graphics.text(font, Component.literal(fitText(selectedId.isEmpty() ? "Nothing selected" : selectedId, infoWidth - 20)),
                     infoLeft + 10, listTop + 26, 0xFFFFFFFF);
+            graphics.text(font, Component.literal(resultCounterText()), infoLeft + 10, listTop + 42, 0xFFB8B8B8);
 
-            graphics.text(font, Component.literal("VARIANT / SUBTYPE"), infoLeft + 10, listTop + 49, 0xFFFFD76A);
+            graphics.text(font, Component.literal("VARIANT / SUBTYPE"), infoLeft + 10, listTop + 59, 0xFFFFD76A);
             graphics.text(font, Component.literal(fitText(selectedVariantLabel(), infoWidth - 20)),
-                    infoLeft + 10, listTop + 64, 0xFFFFFFFF);
+                    infoLeft + 10, listTop + 74, 0xFFFFFFFF);
 
-            graphics.text(font, Component.literal("DIMENSION"), infoLeft + 10, listTop + 84, 0xFFFFD76A);
-            graphics.text(font, Component.literal(dimension), infoLeft + 10, listTop + 99, 0xFFFFFFFF);
+            graphics.text(font, Component.literal("DIMENSION"), infoLeft + 10, listTop + 94, 0xFFFFD76A);
+            graphics.text(font, Component.literal(dimension), infoLeft + 10, listTop + 109, 0xFFFFFFFF);
 
-            graphics.text(font, Component.literal("MAX SEARCH DISTANCE"), infoLeft + 10, listTop + 119, 0xFFFFD76A);
-            graphics.text(font, Component.literal("Up to 10,000 blocks"), infoLeft + 10, listTop + 134, 0xFFE0E0E0);
+            graphics.text(font, Component.literal("MAX SEARCH DISTANCE"), infoLeft + 10, listTop + 128, 0xFFFFD76A);
+            graphics.text(font, Component.literal("Up to 10,000,000 blocks"), infoLeft + 10, listTop + 143, 0xFFE0E0E0);
 
             if (mode.equals("structure")) {
-                graphics.text(font, Component.literal("LOOT INFORMATION"), infoLeft + 10, listTop + 154, 0xFFFFD76A);
-                graphics.text(font, Component.literal("Loot is not guessed from a structure ID."),
-                        infoLeft + 10, listTop + 169, 0xFFBFBFBF);
+                graphics.text(font, Component.literal("STRUCTURE SHAPE"), infoLeft + 10, listTop + 162, 0xFFFFD76A);
+                graphics.text(font, Component.literal("Piece bounds approximate the generated layout."),
+                        infoLeft + 10, listTop + 177, 0xFFBFBFBF);
             } else {
-                graphics.text(font, Component.literal("BIOME BORDER"), infoLeft + 10, listTop + 154, 0xFFFFD76A);
-                graphics.text(font, Component.literal("Gold outline = sampled biome edge."),
-                        infoLeft + 10, listTop + 169, 0xFFBFBFBF);
+                graphics.text(font, Component.literal("BIOME BORDER"), infoLeft + 10, listTop + 162, 0xFFFFD76A);
+                graphics.text(font, Component.literal("Higher detail samples a finer biome edge."),
+                        infoLeft + 10, listTop + 177, 0xFFBFBFBF);
             }
         }
 
@@ -557,6 +585,35 @@ public final class WorldScopeScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return true;
+    }
+
+    private final class ShapeDetailSlider extends AbstractSliderButton {
+        private ShapeDetailSlider(int x, int y, int width, int height, int initialDetail) {
+            super(x, y, width, height,
+                    Component.literal("SHAPE DETAIL: " + initialDetail + "/8"),
+                    (Math.max(1, Math.min(8, initialDetail)) - 1) / 7.0);
+            updateMessage();
+        }
+
+        private int detail() {
+            return 1 + (int) Math.round(value * 7.0);
+        }
+
+        @Override
+        protected void updateMessage() {
+            setMessage(Component.literal("SHAPE DETAIL: " + detail() + "/8"));
+        }
+
+        @Override
+        protected void applyValue() {
+            WorldScopeScanner.setShapeDetail(detail());
+            WorldScopeResult active = WorldScopeScanner.getActiveResult();
+            if (active != null && "biome".equals(active.type())) {
+                status = "Shape detail changed. Run the biome scan again to rebuild its edge at this resolution.";
+            } else {
+                status = "Structure shape detail set to " + detail() + "/8.";
+            }
+        }
     }
 
     private record DimensionButtonLayout(int x, int y, int width, int height, String label, String dimensionId) {
