@@ -189,29 +189,29 @@ public final class WorldScopeScreen extends Screen {
         int infoWidth = Math.max(1, infoRight - infoLeft);
         if (compactUi) {
             addRenderableWidget(new ShapeDetailSlider(
-                    infoLeft + 8, listBottom - 88, Math.max(70, infoWidth - 16), 18,
+                    infoLeft + 8, listBottom - 64, Math.max(70, infoWidth - 16), 16,
                     WorldScopeScanner.getShapeDetail()
             ));
 
-            int toggleY = listBottom - 56;
-            addRenderableWidget(Button.builder(Component.literal("ESP: " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
+            int toggleY = listBottom - 42;
+            addRenderableWidget(Button.builder(Component.literal("ESP " + (WorldScopeClient.isEspEnabled() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleEsp();
                         status = "Through-wall target box " + (WorldScopeClient.isEspEnabled() ? "enabled." : "disabled.");
                         rebuildControls();
-                    }).bounds(infoLeft + 8, toggleY, 62, 18).build());
+                    }).bounds(infoLeft + 8, toggleY, 62, 16).build());
 
-            addRenderableWidget(Button.builder(Component.literal("ALERTS: " + (WorldScopeClient.areProximityAlertsEnabled() ? "ON" : "OFF")),
+            addRenderableWidget(Button.builder(Component.literal("ALERTS " + (WorldScopeClient.areProximityAlertsEnabled() ? "ON" : "OFF")),
                     button -> {
                         WorldScopeClient.toggleProximityAlerts();
                         status = "Proximity alerts " + (WorldScopeClient.areProximityAlertsEnabled() ? "enabled." : "disabled.");
                         rebuildControls();
-                    }).bounds(infoLeft + 74, toggleY, Math.min(76, Math.max(58, infoWidth - 82)), 18).build());
+                    }).bounds(infoLeft + 74, toggleY, Math.min(76, Math.max(58, infoWidth - 82)), 16).build());
 
-            EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 8, listBottom - 27, 46, 18);
+            EditBox alertRadiusBox = createAlertRadiusBox(infoLeft + 8, listBottom - 20, 46, 16);
             addRenderableWidget(alertRadiusBox);
             addRenderableWidget(Button.builder(Component.literal("SET"), button -> setAlertRange(alertRadiusBox))
-                    .bounds(infoLeft + 112, listBottom - 27, Math.min(42, Math.max(32, infoWidth - 120)), 18).build());
+                    .bounds(infoLeft + 112, listBottom - 20, Math.min(42, Math.max(32, infoWidth - 120)), 16).build());
         } else {
             addRenderableWidget(new ShapeDetailSlider(
                     infoLeft + 10, listBottom - 90, Math.max(90, infoWidth - 20), 20,
@@ -454,8 +454,10 @@ public final class WorldScopeScreen extends Screen {
             int radiusX = left + w - 12 - 76 - 6 - 68;
             graphics.text(font, Component.literal("128–10,000,000 BLOCKS"), radiusX, top + 108, 0xFF555555);
         } else {
-            graphics.text(font, Component.literal("MAX DISTANCE  (MIN 128 / MAX 10,000,000 BLOCKS)"),
+            graphics.text(font, Component.literal("MAX DISTANCE (BLOCKS)"),
                     left + w - 224, top + 65, 0xFF404040);
+            graphics.text(font, Component.literal("128 to 10,000,000"),
+                    left + w - 224, top + 105, 0xFF555555);
         }
 
         int listHeight = Math.max(1, listBottom - listTop);
@@ -489,11 +491,10 @@ public final class WorldScopeScreen extends Screen {
         int infoWidth = infoRight - infoLeft;
 
         if (compactUi) {
-            graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 8, listTop + 7, 0xFFFFD76A);
-            graphics.text(font, Component.literal(fitText(selectedId.isEmpty() ? "Nothing selected" : selectedId, infoWidth - 16)),
-                    infoLeft + 8, listTop + 21, 0xFFFFFFFF);
-            graphics.text(font, Component.literal(resultCounterText()), infoLeft + 8, listTop + 39, 0xFFB8B8B8);
-            graphics.text(font, Component.literal("BLOCKS"), infoLeft + 58, listBottom - 17, 0xFFE0E0E0);
+            String compactTarget = (selectedId.isEmpty() ? "Nothing selected" : selectedId)
+                    + "  •  " + resultCounterText();
+            graphics.text(font, Component.literal(fitText(compactTarget, infoWidth - 16)),
+                    infoLeft + 8, listTop + 8, 0xFFFFFFFF);
         } else {
             graphics.text(font, Component.literal("SELECTED TARGET"), infoLeft + 10, listTop + 10, 0xFFFFD76A);
             graphics.text(font, Component.literal(fitText(selectedId.isEmpty() ? "Nothing selected" : selectedId, infoWidth - 20)),
