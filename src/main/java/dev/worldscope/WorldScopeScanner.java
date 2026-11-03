@@ -214,12 +214,16 @@ public final class WorldScopeScanner {
                         total = MAX_BIOME_SAMPLES;
 
                         if (wantedId.equals(actualId)) {
-                            int halfHeight = VERTICAL_BIOME_SAMPLE_STEP;
+                            // A biome lookup addresses a 4x4x4 quart cell.
+                            // Use that cell's actual block-height interval and center
+                            // instead of expanding the ESP by an arbitrary sample step.
+                            int biomeMinY = (sampleY >> 2) << 2;
+                            int biomeMaxY = Math.min(level.getMaxY() - 1, biomeMinY + 3);
                             firstMatch = new WorldScopeResult(
                                     "biome", wantedId, dimensionId,
-                                    x - sampleStep / 2, Math.max(level.getMinY(), sampleY - halfHeight),
+                                    x - sampleStep / 2, Math.max(level.getMinY(), biomeMinY),
                                     z - sampleStep / 2,
-                                    x + sampleStep / 2, Math.min(level.getMaxY() - 1, sampleY + halfHeight),
+                                    x + sampleStep / 2, biomeMaxY,
                                     z + sampleStep / 2
                             );
                             break outer;
@@ -243,7 +247,7 @@ public final class WorldScopeScanner {
         }
 
         status = "Tracing sampled biome border...";
-        int matchedY = firstMatch.centerY();
+        int matchedY = firstMatch.minY() + 2;
         List<WorldScopeBiomeCell> cells = traceBiomeRegion(
                 level, wantedId, firstMatch.centerX(), firstMatch.centerZ(),
                 originX, originZ, matchedY, radius
