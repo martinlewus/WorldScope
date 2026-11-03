@@ -240,7 +240,8 @@ public final class WorldScopeScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {\n        double mouseX = event.x();\n        double mouseY = event.y();\n        int button = event.button();
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mouseX = event.x();\n        double mouseY = event.y();\n        int button = event.button();
         int listLeft = panelLeft + 16;
         int listTop = panelTop + 116;
         int listWidth = Math.max(220, (panelWidth - 48) / 2);
