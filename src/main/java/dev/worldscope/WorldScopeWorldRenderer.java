@@ -73,12 +73,15 @@ public final class WorldScopeWorldRenderer {
             return;
         }
 
-        List<WorldScopeBiomeCell> biomeCells = "biome".equals(result.type())
+        boolean biomeTarget = "biome".equals(result.type());
+        List<WorldScopeBiomeCell> biomeCells = biomeTarget
                 ? WorldScopeScanner.getActiveBiomeCells() : List.of();
+        List<WorldScopeBox> structureBoxes = biomeTarget
+                ? List.of() : WorldScopeScanner.getActiveStructureBoxes();
         boxState = new BoxState(
                 result.minX(), result.minY(), result.minZ(),
-                result.maxX() + 1, result.maxY(), result.maxZ() + 1,
-                biomeCells
+                result.maxX() + 1, result.maxY() + 1, result.maxZ() + 1,
+                structureBoxes, biomeCells, WorldScopeScanner.getShapeDetail()
         );
     }
 
@@ -111,11 +114,49 @@ public final class WorldScopeWorldRenderer {
         float maxY = state.maxY();
         float maxZ = state.maxZ();
 
-        addCuboid(matrices.last().pose(), vertices,
-                minX, minY, minZ, maxX, maxY, maxZ,
-                0.05f, 0.62f, 0.88f, 0.10f);
-        addFrame(matrices.last().pose(), vertices, minX, minY, minZ, maxX, maxY, maxZ);
-        if (!state.biomeCells().isEmpty()) {
+        if (state.biomeCells().isEmpty()) {
+            // Detail 1 is the original single bounding box. Higher settings fade
+            // that broad box back and progressively reveal the generated room/piece
+            // bounds from StructureStart#getPieces().
+            float aggregateAlpha = 0.92f * (8 - state.shapeDetail()) / 7.0f;
+            if (state.shapeDetail() == 1) aggregateAlpha = 0.92f;
+            if (aggregateAlpha > 0.01f) {
+                addCuboid(matrices.last().pose(), vertices,
+                        minX, minY, minZ, maxX, maxY, maxZ,
+                        0.05f, 0.62f, 0.88f, 0.06f * aggregateAlpha);
+                addFrame(matrices.last().pose(), vertices,
+                        minX, minY, minZ, maxX, maxY, maxZ, aggregateAlpha);
+            }
+
+            List<WorldScopeBox> pieces = state.structureBoxes();
+            int detail = state.shapeDetail();
+            int pieceCount = detail <= 1 ? 0
+                    : Math.min(pieces.size(), (int) Math.ceil(pieces.size() * (detail - 1) / 7.0));
+            for (int i = 0; i < pieceCount; i++) {
+                WorldScopeBox piece = pieces.get(i);
+                float pMinX = piece.minX();
+                float pMinY = piece.minY();
+                float pMinZ = piece.minZ();
+                float pMaxX = piece.maxX() + 1;
+                float pMaxY = piece.maxY() + 1;
+                float pMaxZ = piece.maxZ() + 1;
+                addCuboid(matrices.last().pose(), vertices,
+                        pMinX, pMinY, pMinZ, pMaxX, pMaxY, pMaxZ,
+                        0.02f, 0.72f, 1.0f, 0.025f);
+                addFrame(matrices.last().pose(), vertices,
+                        pMinX, pMinY, pMinZ, pMaxX, pMaxY, pMaxZ, 0.95f);
+            }
+        } else {
+            // A biome is a sampled volume, not one rectangular structure. Keep the
+            // aggregate volume only at the coarsest setting; fine settings focus
+            // on its actual sampled boundary cells.
+            if (state.shapeDetail() == 1) {
+                addCuboid(matrices.last().pose(), vertices,
+                        minX, minY, minZ, maxX, maxY, maxZ,
+                        0.05f, 0.62f, 0.88f, 0.035f);
+                addFrame(matrices.last().pose(), vertices,
+                        minX, minY, minZ, maxX, maxY, maxZ, 0.45f);
+            }
             addBiomeBorders(matrices.last().pose(), vertices, state.biomeCells());
         }
         matrices.popPose();
@@ -143,19 +184,21 @@ public final class WorldScopeWorldRenderer {
             float thickness = 0.10f;
             float red = 1.0f, green = 0.72f, blue = 0.12f, alpha = 0.98f;
 
-            if (!occupied.contains(gridKey(cell.minX() - 48, cell.minZ()))) {
+            int cellWidth = Math.max(1, cell.maxX() - cell.minX());
+            int cellDepth = Math.max(1, cell.maxZ() - cell.minZ());
+            if (!occupied.contains(gridKey(cell.minX() - cellWidth, cell.minZ()))) {
                 addCuboid(matrix, vertices, x0 - thickness, y0, z0, x0 + thickness, y1, z1,
                         red, green, blue, alpha);
             }
-            if (!occupied.contains(gridKey(cell.minX() + 48, cell.minZ()))) {
+            if (!occupied.contains(gridKey(cell.minX() + cellWidth, cell.minZ()))) {
                 addCuboid(matrix, vertices, x1 - thickness, y0, z0, x1 + thickness, y1, z1,
                         red, green, blue, alpha);
             }
-            if (!occupied.contains(gridKey(cell.minX(), cell.minZ() - 48))) {
+            if (!occupied.contains(gridKey(cell.minX(), cell.minZ() - cellDepth))) {
                 addCuboid(matrix, vertices, x0, y0, z0 - thickness, x1, y1, z0 + thickness,
                         red, green, blue, alpha);
             }
-            if (!occupied.contains(gridKey(cell.minX(), cell.minZ() + 48))) {
+            if (!occupied.contains(gridKey(cell.minX(), cell.minZ() + cellDepth))) {
                 addCuboid(matrix, vertices, x0, y0, z1 - thickness, x1, y1, z1 + thickness,
                         red, green, blue, alpha);
             }
@@ -168,9 +211,9 @@ public final class WorldScopeWorldRenderer {
 
     private static void addFrame(Matrix4fc matrix, VertexConsumer vertices,
                                  float minX, float minY, float minZ,
-                                 float maxX, float maxY, float maxZ) {
+                                 float maxX, float maxY, float maxZ, float alpha) {
         float t = 0.13f;
-        float r = 0.08f, g = 0.88f, b = 1f, a = 0.98f;
+        float r = 0.08f, g = 0.88f, b = 1f, a = alpha;
 
         // Bottom rectangle.
         addCuboid(matrix, vertices, minX, minY, minZ, maxX, minY + t, minZ + t, r, g, b, a);
@@ -254,6 +297,12 @@ public final class WorldScopeWorldRenderer {
         }
     }
 
-    private record BoxState(float minX, float minY, float minZ, float maxX, float maxY, float maxZ, List<WorldScopeBiomeCell> biomeCells) {
+    private record BoxState(
+            float minX, float minY, float minZ,
+            float maxX, float maxY, float maxZ,
+            List<WorldScopeBox> structureBoxes,
+            List<WorldScopeBiomeCell> biomeCells,
+            int shapeDetail
+    ) {
     }
 }
