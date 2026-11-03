@@ -491,4 +491,7 @@ public final class WorldScopeScanner {
 
     private record ChunkCandidate(int x, int z, long distanceSquared) {
     }
+
+    private record BiomeGridPoint(int x, int z) {
+    }
 }
