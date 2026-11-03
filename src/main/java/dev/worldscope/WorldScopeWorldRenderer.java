@@ -38,6 +38,7 @@ public final class WorldScopeWorldRenderer {
             RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
                     .withLocation(Identifier.fromNamespaceAndPath("worldscope", "pipeline/target_box_through_walls"))
                     .withDepthStencilState(Optional.empty())
+                    .withCull(false)
                     .build()
     );
 
