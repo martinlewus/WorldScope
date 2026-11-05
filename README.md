@@ -1,22 +1,23 @@
-# WorldScope 2.0.15 — Fabric 26.2
+# WorldScope 2.0.16 — Fabric 26.2
 
 WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
-## Biome improvements in 2.0.15
+## Biome improvements in 2.0.16
 
-- Biomes are traced as connected horizontal regions instead of showing only the first sampled point.
-- Each sampled horizontal cell records the biome's contiguous vertical extent, so the ESP outlines a 3D biome volume rather than a thin flat ring at one Y level.
+- Biomes are sampled at the terrain generator's surface height instead of at arbitrary player-relative Y levels. This prevents sky/cave biome samples from being mistaken for the visible surface biome.
+- Connected components use eight-way adjacency and a shared visited-tile set, preventing the same surface biome patch from being returned repeatedly or split at diagonal joins.
 - Removed the misleading aggregate rectangular biome box; biome ESP now draws the sampled region boundary.
-- Shape Detail now uses a finer coarsest sampling step (32 blocks instead of 48), with detail 8 sampling at 4-block biome resolution.
-- Increased the biome sample budget from 750,000 to 2,000,000 samples.
-- Increased the per-region outline limit from 8,192 to 32,768 cells.
+- Shape Detail now samples at 16, 12, 8, or 4-block intervals, with detail 8 sampling each 4-block biome quart cell.
+- The scan counts both region tracing and outward search against the 2,000,000-sample budget.
+- Increased the per-region outline limit to 524,288 cells.
 - Increased biome result capacity from 128 to 512. Structure result capacity is also 512.
 
-## Biome volume tracing
+## Surface biome tracing
 
-- Connected horizontal samples are traced into contiguous biome regions.
-- Every biome cell stores its sampled minimum and maximum Y, producing a 3D volume outline rather than a single-height box.
-- Biome search returns up to 512 regions, with a 2,000,000-sample workload budget.
+- The scanner samples the biome at the generated terrain surface for each horizontal tile.
+- Each returned region is a connected surface patch. It is not a vertical biome-volume search; cave-only biomes need a separate 3D search mode.
+- Biome tiles are 16 blocks at detail 1, 12 at detail 2, 8 at details 3–5, and 4 at details 6–8.
+- Search and flood-fill share a 2,000,000-sample budget, and each region can contain up to 524,288 tiles.
 
 ## Features
 
@@ -24,7 +25,7 @@ WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 - Search structures using dimension-specific generator placements, native presence checks, and direct/referenced structure-start verification.
 - Nearby loaded-chunk structure verification to recover generated structures close to the player.
 - Up to 512 structure and biome results with menu arrows and gameplay Left/Right keybinds.
-- Shape Detail 1–8, structure-piece outlines and sampled 3D biome borders.
+- Shape Detail 1–8, structure-piece outlines and sampled surface-biome borders.
 - Maximum search range 128 to 10,000,000 blocks, with workload caps and partial-scan reporting.
 - Persistent target selection, search radius, marquee speed, tracer setting, and ESP colour.
 - Proximity alerts and coordinates HUD.
@@ -34,12 +35,12 @@ WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
 - Structure starts are verified against generated chunk data and neighboring structure references.
 - Structure ESP uses generated piece bounding boxes, not exact block-occupancy meshes.
-- Biome borders are sampled approximations drawn as thin wireframe edges (not filled translucent walls). Their horizontal resolution is controlled by Shape Detail; vertical extents follow the contiguous matching biome quart range at each sampled column.
+- Biome borders are sampled surface approximations drawn as thin wireframe edges (not filled translucent walls). Their horizontal resolution is controlled by Shape Detail; they follow the generator's surface height and do not represent cave-only or full 3D biome volumes.
 - The maximum search radius does not guarantee the entire area can be completed in one pass when workload limits are reached. Biome scans can stop at the 2,000,000-sample budget or 512-result limit; structure scans retain their own placement/candidate workload limits.
 
 ## Installation
 
-Place `worldscope-2.0.15.jar` in `.minecraft/mods` and remove older WorldScope JARs.
+Place `worldscope-2.0.16.jar` in `.minecraft/mods` and remove older WorldScope JARs.
 
 ## Build
 
