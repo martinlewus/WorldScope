@@ -196,7 +196,7 @@ public final class WorldScopeScanner {
         if ("biome".equals(type)) {
             status = "Scanning biome samples at detail " + shapeDetail + "...";
             WORKER.execute(() -> scanBiome(
-                    targetLevel, id, dimensionId, originX, originY, originZ, radius
+                    targetLevel, id, dimensionId, originX, originZ, radius
             ));
         } else {
             status = "Preparing structure placement search...";
@@ -237,7 +237,7 @@ public final class WorldScopeScanner {
      * sample the biome at the generator's actual surface height instead.
      */
     private static void scanBiome(ServerLevel level, String wantedId, String dimensionId,
-                                  int originX, int originY, int originZ, int radius) {
+                                  int originX, int originZ, int radius) {
         final int sampleStep = biomeSampleStep(shapeDetail);
         final int halfStep = sampleStep / 2;
         final long radiusSquared = (long) radius * radius;
