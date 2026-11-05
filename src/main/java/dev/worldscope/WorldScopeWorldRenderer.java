@@ -174,7 +174,9 @@ public final class WorldScopeWorldRenderer {
             Minecraft client = Minecraft.getInstance();
             if (client.player != null) {
                 Vec3 look = client.player.getLookAngle().normalize();
-                Vec3 tracerStart = camera.add(look.scale(0.35));
+                // Start beyond the near-camera projection zone so the ribbon does not
+                // balloon into a screen-filling triangle in perspective.
+                Vec3 tracerStart = camera.add(look.scale(1.25));
                 Vec3 targetCenter = new Vec3(
                         (state.minX() + state.maxX()) * 0.5,
                         (state.minY() + state.maxY()) * 0.5,
@@ -204,8 +206,8 @@ public final class WorldScopeWorldRenderer {
         Vec3 referenceUp = Math.abs(direction.y) > 0.92
                 ? new Vec3(1.0, 0.0, 0.0)
                 : new Vec3(0.0, 1.0, 0.0);
-        Vec3 side = direction.cross(referenceUp).normalize().scale(0.035);
-        Vec3 vertical = direction.cross(side).normalize().scale(0.035);
+        Vec3 side = direction.cross(referenceUp).normalize().scale(0.004);
+        Vec3 vertical = direction.cross(side).normalize().scale(0.004);
 
         // Two perpendicular ribbons form a thin, camera-readable 3D tracer.
         addTracerRibbon(matrix, vertices, from, to, side, red, green, blue);
