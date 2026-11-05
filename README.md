@@ -1,8 +1,14 @@
-# WorldScope 2.0.17 — Fabric 26.2
+# WorldScope 2.0.18 — Fabric 26.2
 
 WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
-## Biome improvements in 2.0.17
+## Structure ESP and search corrections in 2.0.18
+
+- Tracer ribbons are much thinner and start farther from the camera to avoid a giant perspective triangle.
+- Structure starts discovered through neighboring chunk references are only returned when their actual bounding boxes intersect the requested horizontal search radius.
+- The status text explicitly reports when both the 512-result limit and candidate-placement workload limit are reached.
+
+## Biome improvements in 2.0.18
 
 - Biomes are sampled at the terrain generator's surface height instead of at arbitrary player-relative Y levels. This prevents sky/cave biome samples from being mistaken for the visible surface biome.
 - Connected components use eight-way adjacency and a shared visited-tile set, preventing the same surface biome patch from being returned repeatedly or split at diagonal joins.
@@ -41,7 +47,7 @@ WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
 ## Installation
 
-Place `worldscope-2.0.17.jar` in `.minecraft/mods` and remove older WorldScope JARs.
+Place `worldscope-2.0.18.jar` in `.minecraft/mods` and remove older WorldScope JARs.
 
 ## Build
 
