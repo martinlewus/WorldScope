@@ -823,7 +823,7 @@ public final class WorldScopeScanner {
                         status = "Checking nearest candidate structures...";
                         checkCandidateChunks(
                                 client, level, target, wantedId, dimensionId,
-                                candidates, index + 1, originX, originZ,
+                                candidates, index + 1, originX, originZ, radius,
                                 found, placementBudgetReached, stats
                         );
                     }));
