@@ -233,39 +233,82 @@ public final class WorldScopeWorldRenderer {
             occupied.add(gridKey(cell.minX(), cell.minZ()));
         }
 
-        // Gold perimeter segments make the sampled biome transition visible through terrain.
+        // Draw only the edges of exposed biome boundary panels. Filled cuboids here
+        // create enormous translucent walls when a biome spans a large Y range.
+        // The wireframe keeps the full sampled 3D extent visible without obscuring
+        // the world behind it.
         for (WorldScopeBiomeCell cell : cells) {
             float x0 = cell.minX();
             float z0 = cell.minZ();
             float x1 = cell.maxX();
             float z1 = cell.maxZ();
-            // The scanner now traces the biome's vertical extent at each
-            // horizontal sample, so this is a real column boundary rather than
-            // a nearly-flat line around one sampled Y coordinate.
             float y0 = cell.minY();
             float y1 = cell.maxY();
-            float thickness = 0.10f;
-            float alpha = 0.98f;
 
             int cellWidth = Math.max(1, cell.maxX() - cell.minX());
             int cellDepth = Math.max(1, cell.maxZ() - cell.minZ());
+
             if (!occupied.contains(gridKey(cell.minX() - cellWidth, cell.minZ()))) {
-                addCuboid(matrix, vertices, x0 - thickness, y0, z0, x0 + thickness, y1, z1,
-                        red, green, blue, alpha);
+                addBiomePanelAtX(matrix, vertices, x0, y0, y1, z0, z1,
+                        red, green, blue);
             }
             if (!occupied.contains(gridKey(cell.minX() + cellWidth, cell.minZ()))) {
-                addCuboid(matrix, vertices, x1 - thickness, y0, z0, x1 + thickness, y1, z1,
-                        red, green, blue, alpha);
+                addBiomePanelAtX(matrix, vertices, x1, y0, y1, z0, z1,
+                        red, green, blue);
             }
             if (!occupied.contains(gridKey(cell.minX(), cell.minZ() - cellDepth))) {
-                addCuboid(matrix, vertices, x0, y0, z0 - thickness, x1, y1, z0 + thickness,
-                        red, green, blue, alpha);
+                addBiomePanelAtZ(matrix, vertices, z0, y0, y1, x0, x1,
+                        red, green, blue);
             }
             if (!occupied.contains(gridKey(cell.minX(), cell.minZ() + cellDepth))) {
-                addCuboid(matrix, vertices, x0, y0, z1 - thickness, x1, y1, z1 + thickness,
-                        red, green, blue, alpha);
+                addBiomePanelAtZ(matrix, vertices, z1, y0, y1, x0, x1,
+                        red, green, blue);
             }
         }
+    }
+
+    private static void addBiomePanelAtX(Matrix4fc matrix, VertexConsumer vertices,
+                                         float x, float y0, float y1,
+                                         float z0, float z1,
+                                         float red, float green, float blue) {
+        addBiomeEdgeZ(matrix, vertices, x, y0, z0, z1, red, green, blue);
+        addBiomeEdgeZ(matrix, vertices, x, y1, z0, z1, red, green, blue);
+        addBiomeEdgeY(matrix, vertices, x, y0, y1, z0, red, green, blue);
+        addBiomeEdgeY(matrix, vertices, x, y0, y1, z1, red, green, blue);
+    }
+
+    private static void addBiomePanelAtZ(Matrix4fc matrix, VertexConsumer vertices,
+                                         float z, float y0, float y1,
+                                         float x0, float x1,
+                                         float red, float green, float blue) {
+        addBiomeEdgeX(matrix, vertices, x0, x1, y0, z, red, green, blue);
+        addBiomeEdgeX(matrix, vertices, x0, x1, y1, z, red, green, blue);
+        addBiomeEdgeY(matrix, vertices, x0, y0, y1, z, red, green, blue);
+        addBiomeEdgeY(matrix, vertices, x1, y0, y1, z, red, green, blue);
+    }
+
+    private static void addBiomeEdgeX(Matrix4fc matrix, VertexConsumer vertices,
+                                      float x0, float x1, float y, float z,
+                                      float red, float green, float blue) {
+        float t = 0.075f;
+        addCuboid(matrix, vertices, x0, y - t, z - t, x1, y + t, z + t,
+                red, green, blue, 0.98f);
+    }
+
+    private static void addBiomeEdgeY(Matrix4fc matrix, VertexConsumer vertices,
+                                      float x, float y0, float y1, float z,
+                                      float red, float green, float blue) {
+        float t = 0.075f;
+        addCuboid(matrix, vertices, x - t, y0, z - t, x + t, y1, z + t,
+                red, green, blue, 0.98f);
+    }
+
+    private static void addBiomeEdgeZ(Matrix4fc matrix, VertexConsumer vertices,
+                                      float x, float y, float z0, float z1,
+                                      float red, float green, float blue) {
+        float t = 0.075f;
+        addCuboid(matrix, vertices, x - t, y - t, z0, x + t, y + t, z1,
+                red, green, blue, 0.98f);
     }
 
     private static long gridKey(int x, int z) {
