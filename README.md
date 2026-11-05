@@ -1,8 +1,8 @@
-# WorldScope 2.0.14 — Fabric 26.2
+# WorldScope 2.0.15 — Fabric 26.2
 
 WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
-## Biome improvements in 2.0.14
+## Biome improvements in 2.0.15
 
 - Biomes are traced as connected horizontal regions instead of showing only the first sampled point.
 - Each sampled horizontal cell records the biome's contiguous vertical extent, so the ESP outlines a 3D biome volume rather than a thin flat ring at one Y level.
@@ -34,12 +34,12 @@ WorldScope is a single-player structure and biome scanner for Minecraft 26.2.
 
 - Structure starts are verified against generated chunk data and neighboring structure references.
 - Structure ESP uses generated piece bounding boxes, not exact block-occupancy meshes.
-- Biome borders are sampled approximations. Their horizontal resolution is controlled by Shape Detail; vertical extents follow the contiguous matching biome quart range at each sampled column.
+- Biome borders are sampled approximations drawn as thin wireframe edges (not filled translucent walls). Their horizontal resolution is controlled by Shape Detail; vertical extents follow the contiguous matching biome quart range at each sampled column.
 - The maximum search radius does not guarantee the entire area can be completed in one pass when workload limits are reached. Biome scans can stop at the 2,000,000-sample budget or 512-result limit; structure scans retain their own placement/candidate workload limits.
 
 ## Installation
 
-Place `worldscope-2.0.14.jar` in `.minecraft/mods` and remove older WorldScope JARs.
+Place `worldscope-2.0.15.jar` in `.minecraft/mods` and remove older WorldScope JARs.
 
 ## Build
 
