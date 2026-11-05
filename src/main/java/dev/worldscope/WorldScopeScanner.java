@@ -25,6 +25,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructureCheckResult;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
@@ -41,8 +42,7 @@ public final class WorldScopeScanner {
     private static final int MAX_PLACEMENT_REGION_TESTS = 1_000_000;
     private static final int MAX_BIOME_SAMPLES = 2_000_000;
     private static final int MAX_BIOME_RESULTS = 512;
-    private static final int MAX_BIOME_REGION_CELLS = 32_768;
-    private static final int VERTICAL_BIOME_SAMPLE_STEP = 8;
+    private static final int MAX_BIOME_REGION_CELLS = 524_288;
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "WorldScope-Scanner");
@@ -132,13 +132,9 @@ public final class WorldScopeScanner {
 
     private static int biomeSampleStep(int detail) {
         return switch (Math.max(1, Math.min(8, detail))) {
-            case 1 -> 32;
-            case 2 -> 28;
-            case 3 -> 24;
-            case 4 -> 20;
-            case 5 -> 16;
-            case 6 -> 12;
-            case 7 -> 8;
+            case 1 -> 16;
+            case 2 -> 12;
+            case 3, 4, 5 -> 8;
             default -> 4;
         };
     }
@@ -234,92 +230,85 @@ public final class WorldScopeScanner {
         return new double[]{0.0, 0.0};
     }
 
+    /**
+     * Finds surface biome regions. Biome IDs are 3D in Minecraft, so sampling
+     * arbitrary heights can report a biome floating above the terrain or split
+     * one surface biome into many vertical slices. For map-style biome search,
+     * sample the biome at the generator's actual surface height instead.
+     */
     private static void scanBiome(ServerLevel level, String wantedId, String dimensionId,
                                   int originX, int originY, int originZ, int radius) {
         final int sampleStep = biomeSampleStep(shapeDetail);
+        final int halfStep = sampleStep / 2;
         final long radiusSquared = (long) radius * radius;
-        final int[] verticalSamples = buildBiomeHeightSamples(
-                level.getMinY(), level.getMaxY() - 1, originY
-        );
-        final Set<BiomeScanKey> coveredCells = new HashSet<>();
+        final int gridOriginX = Math.floorDiv(originX, sampleStep) * sampleStep;
+        final int gridOriginZ = Math.floorDiv(originZ, sampleStep) * sampleStep;
+        final Set<Long> coveredTiles = new HashSet<>();
         final List<WorldScopeHit> found = new ArrayList<>();
-        AtomicInteger samples = new AtomicInteger();
+        final AtomicInteger samples = new AtomicInteger();
         boolean sampleLimitReached = false;
         boolean regionLimitReached = false;
 
-        // Search outward from the player. Once a connected biome patch is traced,
-        // mark all of its sampled vertical slices so it is not returned repeatedly.
+        // Visit sample tiles in expanding square rings, nearest first. A tile key
+        // is shared by the outer scan and the region flood-fill, preventing the
+        // same connected biome from being returned repeatedly.
         outer:
         for (int ring = 0; ring <= radius; ring += sampleStep) {
             if (CANCELLED.get()) break;
             for (int dx = -ring; dx <= ring; dx += sampleStep) {
                 for (int dz = -ring; dz <= ring; dz += sampleStep) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) continue;
-                    if ((long) dx * dx + (long) dz * dz > radiusSquared) continue;
 
-                    int x = originX + dx;
-                    int z = originZ + dz;
-                    for (int sampleY : verticalSamples) {
-                        if (CANCELLED.get()) break outer;
-                        int checked = samples.incrementAndGet();
-                        if (checked > MAX_BIOME_SAMPLES) {
-                            sampleLimitReached = true;
-                            break outer;
-                        }
+                    int tileX = gridOriginX + dx;
+                    int tileZ = gridOriginZ + dz;
+                    int sampleX = tileX + halfStep;
+                    int sampleZ = tileZ + halfStep;
+                    long distanceX = (long) sampleX - originX;
+                    long distanceZ = (long) sampleZ - originZ;
+                    if (distanceX * distanceX + distanceZ * distanceZ > radiusSquared) continue;
+                    if (!coveredTiles.add(gridKey(tileX, tileZ))) continue;
 
-                        int seedQuartY = sampleY >> 2;
-                        BiomeScanKey sampleKey = new BiomeScanKey(x, seedQuartY, z);
-                        if (coveredCells.contains(sampleKey)) continue;
-
-                        Holder<?> biome = level.getUncachedNoiseBiome(x >> 2, seedQuartY, z >> 2);
-                        String actualId = biome.unwrapKey()
-                                .map(key -> key.identifier().toString()).orElse("");
-                        completed = checked;
-                        total = MAX_BIOME_SAMPLES;
-                        if (!wantedId.equals(actualId)) continue;
-
-                        BiomeRegionTrace trace = traceBiomeRegion(
-                                level, wantedId, x, z, originX, originZ,
-                                seedQuartY, radius, sampleStep
-                        );
-                        List<WorldScopeBiomeCell> cells = trace.cells();
-                        regionLimitReached |= trace.truncated();
-                        if (cells.isEmpty()) {
-                            int[] vertical = biomeVerticalExtent(level, wantedId, x, z, seedQuartY);
-                            int half = sampleStep / 2;
-                            cells = List.of(new WorldScopeBiomeCell(
-                                    x - half, z - half, x + (sampleStep - half),
-                                    z + (sampleStep - half), vertical[0], vertical[1]
-                            ));
-                        }
-
-                        for (WorldScopeBiomeCell cell : cells) {
-                            int centerX = cell.minX() + (cell.maxX() - cell.minX()) / 2;
-                            int centerZ = cell.minZ() + (cell.maxZ() - cell.minZ()) / 2;
-                            int firstQuart = cell.minY() >> 2;
-                            int lastQuart = (cell.maxY() - 1) >> 2;
-                            for (int quartY = firstQuart; quartY <= lastQuart; quartY++) {
-                                coveredCells.add(new BiomeScanKey(centerX, quartY, centerZ));
-                            }
-                        }
-
-                        int minX = cells.stream().mapToInt(WorldScopeBiomeCell::minX).min().orElse(x - sampleStep / 2);
-                        int minZ = cells.stream().mapToInt(WorldScopeBiomeCell::minZ).min().orElse(z - sampleStep / 2);
-                        int maxX = cells.stream().mapToInt(WorldScopeBiomeCell::maxX).max().orElse(x + sampleStep / 2);
-                        int maxZ = cells.stream().mapToInt(WorldScopeBiomeCell::maxZ).max().orElse(z + sampleStep / 2);
-                        int minY = cells.stream().mapToInt(WorldScopeBiomeCell::minY).min().orElse(sampleY);
-                        int maxY = cells.stream().mapToInt(WorldScopeBiomeCell::maxY).max().orElse(sampleY + 4);
-
-                        WorldScopeResult result = new WorldScopeResult(
-                                "biome", wantedId, dimensionId,
-                                minX, minY, minZ,
-                                maxX, maxY, maxZ
-                        );
-                        found.add(new WorldScopeHit(result, List.of(), cells));
-
-                        if (found.size() >= MAX_BIOME_RESULTS) break outer;
-                        status = "Found " + found.size() + " biome region(s); continuing outward...";
+                    if (samples.get() >= MAX_BIOME_SAMPLES) {
+                        sampleLimitReached = true;
+                        break outer;
                     }
+                    samples.incrementAndGet();
+                    int surfaceY = getSurfaceHeight(level, sampleX, sampleZ);
+                    String actualId = getBiomeIdAt(level, sampleX, surfaceY - 1, sampleZ);
+                    completed = samples.get();
+                    total = MAX_BIOME_SAMPLES;
+                    if (!wantedId.equals(actualId)) continue;
+
+                    BiomeRegionTrace trace = traceBiomeRegion(
+                            level, wantedId, tileX, tileZ, surfaceY,
+                            originX, originZ, radius, sampleStep, coveredTiles, samples
+                    );
+                    regionLimitReached |= trace.truncated();
+                    sampleLimitReached |= trace.sampleLimitReached();
+
+                    List<WorldScopeBiomeCell> cells = trace.cells();
+                    if (cells.isEmpty()) {
+                        cells = List.of(makeSurfaceBiomeCell(tileX, tileZ, sampleStep, surfaceY, level));
+                    }
+
+                    int minX = cells.stream().mapToInt(WorldScopeBiomeCell::minX).min().orElse(tileX);
+                    int minZ = cells.stream().mapToInt(WorldScopeBiomeCell::minZ).min().orElse(tileZ);
+                    // WorldScopeResult uses inclusive maximum block coordinates;
+                    // biome cells store exclusive tile edges for clean rendering.
+                    int maxX = cells.stream().mapToInt(WorldScopeBiomeCell::maxX).max().orElse(tileX + sampleStep) - 1;
+                    int maxZ = cells.stream().mapToInt(WorldScopeBiomeCell::maxZ).max().orElse(tileZ + sampleStep) - 1;
+                    int minY = cells.stream().mapToInt(WorldScopeBiomeCell::minY).min().orElse(surfaceY - 1);
+                    int maxY = cells.stream().mapToInt(WorldScopeBiomeCell::maxY).max().orElse(surfaceY);
+
+                    WorldScopeResult result = new WorldScopeResult(
+                            "biome", wantedId, dimensionId,
+                            minX, minY, minZ,
+                            maxX, maxY, maxZ
+                    );
+                    found.add(new WorldScopeHit(result, List.of(), cells));
+
+                    if (found.size() >= MAX_BIOME_RESULTS) break outer;
+                    status = "Found " + found.size() + " surface biome region(s); continuing outward...";
                 }
             }
         }
@@ -330,60 +319,84 @@ public final class WorldScopeScanner {
         }
         if (found.isEmpty()) {
             String message = sampleLimitReached
-                    ? "Biome not found before the sample budget was reached. Try a smaller radius or lower shape detail."
-                    : "Biome not found in the selected radius at any sampled height.";
+                    ? "No surface match found before the biome sample budget was reached. Try a smaller radius or lower shape detail."
+                    : "No surface region of that biome was found in the selected radius.";
             Minecraft.getInstance().execute(() -> finishHits(List.of(), message));
             return;
         }
 
         String message;
         if (sampleLimitReached) {
-            message = "Biome sample budget reached; showing nearest regions in the covered area.";
+            message = "Biome sample budget reached; showing nearest surface regions in the covered area.";
         } else if (found.size() >= MAX_BIOME_RESULTS) {
             message = "Biome result limit reached (" + MAX_BIOME_RESULTS
-                    + "); more regions may exist in the search radius.";
+                    + "); more surface regions may exist in the search radius.";
         } else {
-            message = "Biome scan complete; showing nearest sampled regions.";
+            message = "Surface biome scan complete; showing nearest connected regions.";
         }
         if (regionLimitReached) {
-            message += " One or more biome outlines reached the per-region detail limit.";
+            message += " One or more regions reached the outline cell limit and are partial.";
         }
         String finalMessage = message;
         Minecraft.getInstance().execute(() -> finishHits(found, finalMessage));
     }
 
-    private static int[] buildBiomeHeightSamples(int minY, int maxY, int preferredY) {
-        int centerY = Math.max(minY, Math.min(maxY, preferredY));
-        ArrayList<Integer> samples = new ArrayList<>();
-        for (int offset = 0; centerY - offset >= minY || centerY + offset <= maxY;
-             offset += VERTICAL_BIOME_SAMPLE_STEP) {
-            int below = centerY - offset;
-            int above = centerY + offset;
-            if (below >= minY && !samples.contains(below)) samples.add(below);
-            if (offset != 0 && above <= maxY && !samples.contains(above)) samples.add(above);
-        }
-        if (!samples.contains(minY)) samples.add(minY);
-        if (!samples.contains(maxY)) samples.add(maxY);
-        return samples.stream().mapToInt(Integer::intValue).toArray();
+    private static int getSurfaceHeight(ServerLevel level, int blockX, int blockZ) {
+        int height = level.getChunkSource().getGenerator().getBaseHeight(
+                blockX,
+                blockZ,
+                Heightmap.Types.WORLD_SURFACE_WG,
+                level,
+                level.getChunkSource().randomState()
+        );
+        return Math.max(level.getMinY() + 1, Math.min(level.getMaxY(), height));
+    }
+
+    private static String getBiomeIdAt(ServerLevel level, int blockX, int blockY, int blockZ) {
+        int clampedY = Math.max(level.getMinY(), Math.min(level.getMaxY() - 1, blockY));
+        Holder<?> biome = level.getUncachedNoiseBiome(blockX >> 2, clampedY >> 2, blockZ >> 2);
+        return biome.unwrapKey()
+                .map(key -> key.identifier().toString())
+                .orElse("");
+    }
+
+    private static WorldScopeBiomeCell makeSurfaceBiomeCell(
+            int tileX, int tileZ, int sampleStep, int surfaceY, ServerLevel level
+    ) {
+        return new WorldScopeBiomeCell(
+                tileX, tileZ, tileX + sampleStep, tileZ + sampleStep,
+                Math.max(level.getMinY(), surfaceY - 1), surfaceY
+        );
     }
 
     private static BiomeRegionTrace traceBiomeRegion(
             ServerLevel level,
             String wantedId,
-            int seedX,
-            int seedZ,
+            int seedTileX,
+            int seedTileZ,
+            int seedSurfaceY,
             int originX,
             int originZ,
-            int seedQuartY,
             int radius,
-            int sampleStep
+            int sampleStep,
+            Set<Long> coveredTiles,
+            AtomicInteger samples
     ) {
         ArrayList<WorldScopeBiomeCell> cells = new ArrayList<>();
         ArrayDeque<BiomeGridPoint> queue = new ArrayDeque<>();
-        HashSet<Long> visited = new HashSet<>();
+        HashSet<Long> localVisited = new HashSet<>();
         long radiusSquared = (long) radius * radius;
-        queue.add(new BiomeGridPoint(seedX, seedZ));
+        int halfStep = sampleStep / 2;
         boolean truncated = false;
+        boolean sampleLimitReached = false;
+
+        long seedKey = gridKey(seedTileX, seedTileZ);
+        localVisited.add(seedKey);
+        cells.add(makeSurfaceBiomeCell(seedTileX, seedTileZ, sampleStep, seedSurfaceY, level));
+
+        // Eight-way connectivity avoids splitting a single biome into separate
+        // results where sampled tiles touch only at a diagonal corner.
+        enqueueBiomeNeighbors(queue, seedTileX, seedTileZ, sampleStep);
 
         while (!queue.isEmpty() && !CANCELLED.get()) {
             if (cells.size() >= MAX_BIOME_REGION_CELLS) {
@@ -392,66 +405,45 @@ public final class WorldScopeScanner {
             }
 
             BiomeGridPoint point = queue.removeFirst();
-            long dx = (long) point.x() - originX;
-            long dz = (long) point.z() - originZ;
+            int sampleX = point.x() + halfStep;
+            int sampleZ = point.z() + halfStep;
+            long dx = (long) sampleX - originX;
+            long dz = (long) sampleZ - originZ;
             if (dx * dx + dz * dz > radiusSquared) continue;
 
             long key = gridKey(point.x(), point.z());
-            if (!visited.add(key)) continue;
+            if (!localVisited.add(key)) continue;
+            if (!coveredTiles.add(key)) continue;
 
-            Holder<?> biome = level.getUncachedNoiseBiome(
-                    point.x() >> 2, seedQuartY, point.z() >> 2
-            );
-            String actualId = biome.unwrapKey()
-                    .map(resourceKey -> resourceKey.identifier().toString()).orElse("");
-            completed++;
+            if (samples.get() >= MAX_BIOME_SAMPLES) {
+                sampleLimitReached = true;
+                break;
+            }
+            samples.incrementAndGet();
+            int surfaceY = getSurfaceHeight(level, sampleX, sampleZ);
+            String actualId = getBiomeIdAt(level, sampleX, surfaceY - 1, sampleZ);
+            completed = samples.get();
             if (!wantedId.equals(actualId)) continue;
 
-            int[] vertical = biomeVerticalExtent(level, wantedId, point.x(), point.z(), seedQuartY);
-            int half = sampleStep / 2;
-            cells.add(new WorldScopeBiomeCell(
-                    point.x() - half, point.z() - half,
-                    point.x() + (sampleStep - half), point.z() + (sampleStep - half),
-                    vertical[0], vertical[1]
-            ));
-
-            queue.addLast(new BiomeGridPoint(point.x() - sampleStep, point.z()));
-            queue.addLast(new BiomeGridPoint(point.x() + sampleStep, point.z()));
-            queue.addLast(new BiomeGridPoint(point.x(), point.z() - sampleStep));
-            queue.addLast(new BiomeGridPoint(point.x(), point.z() + sampleStep));
+            cells.add(makeSurfaceBiomeCell(point.x(), point.z(), sampleStep, surfaceY, level));
+            enqueueBiomeNeighbors(queue, point.x(), point.z(), sampleStep);
         }
 
-        return new BiomeRegionTrace(List.copyOf(cells), truncated);
+        return new BiomeRegionTrace(List.copyOf(cells), truncated, sampleLimitReached);
     }
 
-    private static int[] biomeVerticalExtent(
-            ServerLevel level, String wantedId, int blockX, int blockZ, int seedQuartY
+    private static void enqueueBiomeNeighbors(
+            ArrayDeque<BiomeGridPoint> queue, int tileX, int tileZ, int sampleStep
     ) {
-        int minQuart = level.getMinY() >> 2;
-        int maxQuart = (level.getMaxY() - 1) >> 2;
-        int bottom = seedQuartY;
-        int top = seedQuartY;
-
-        while (bottom > minQuart && isWantedBiome(level, wantedId, blockX, blockZ, bottom - 1)) {
-            bottom--;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dz == 0) continue;
+                queue.addLast(new BiomeGridPoint(
+                        tileX + dx * sampleStep,
+                        tileZ + dz * sampleStep
+                ));
+            }
         }
-        while (top < maxQuart && isWantedBiome(level, wantedId, blockX, blockZ, top + 1)) {
-            top++;
-        }
-
-        return new int[]{
-                Math.max(level.getMinY(), bottom * 4),
-                Math.min(level.getMaxY(), (top + 1) * 4)
-        };
-    }
-
-    private static boolean isWantedBiome(
-            ServerLevel level, String wantedId, int blockX, int blockZ, int quartY
-    ) {
-        Holder<?> biome = level.getUncachedNoiseBiome(blockX >> 2, quartY, blockZ >> 2);
-        return biome.unwrapKey()
-                .map(key -> key.identifier().toString().equals(wantedId))
-                .orElse(false);
     }
 
     private static long gridKey(int x, int z) {
@@ -1132,10 +1124,7 @@ public final class WorldScopeScanner {
     private record BiomeGridPoint(int x, int z) {
     }
 
-    private record BiomeRegionTrace(List<WorldScopeBiomeCell> cells, boolean truncated) {
-    }
-
-    private record BiomeScanKey(int x, int y, int z) {
+    private record BiomeRegionTrace(List<WorldScopeBiomeCell> cells, boolean truncated, boolean sampleLimitReached) {
     }
 
     private record RegionNode(int regionX, int regionZ, long minimumDistanceSquared) {
