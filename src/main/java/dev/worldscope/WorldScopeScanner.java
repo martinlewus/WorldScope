@@ -471,7 +471,7 @@ public final class WorldScopeScanner {
             // referenced by a nearby loaded chunk even if placement enumeration or
             // the structure-presence cache disagrees with the current world seed.
             LoadedChunkScan loadedScan = scanLoadedChunksNear(
-                    level, target, wantedId, dimensionId, originX, originZ
+                    level, target, wantedId, dimensionId, originX, originZ, radius
             );
             ArrayList<WorldScopeHit> initialHits = new ArrayList<>(loadedScan.hits());
 
@@ -510,7 +510,7 @@ public final class WorldScopeScanner {
                             status = "Checking nearest candidate structures...";
                             checkCandidateChunks(
                                     client, level, target, wantedId, dimensionId,
-                                    search.candidates(), 0, originX, originZ,
+                                    search.candidates(), 0, originX, originZ, radius,
                                     new ArrayList<>(initialHits), search.budgetReached(),
                                     createInitialScanStats(loadedScan)
                             );
@@ -536,7 +536,8 @@ public final class WorldScopeScanner {
             String wantedId,
             String dimensionId,
             int originX,
-            int originZ
+            int originZ,
+            int radius
     ) {
         final int sweepRadiusChunks = 24;
         int centerChunkX = Math.floorDiv(originX, 16);
@@ -579,6 +580,9 @@ public final class WorldScopeScanner {
                             box.minX(), box.minY(), box.minZ(),
                             box.maxX(), box.maxY(), box.maxZ()
                     );
+                    if (distanceToResultSquared(result, originX, originZ) > (long) radius * radius) {
+                        continue;
+                    }
                     hits.add(new WorldScopeHit(result, extractPieceBounds(start), List.of()));
                 }
             }
@@ -612,6 +616,7 @@ public final class WorldScopeScanner {
             int index,
             int originX,
             int originZ,
+            int radius,
             List<WorldScopeHit> found,
             boolean placementBudgetReached,
             StructureScanStats stats
@@ -652,6 +657,9 @@ public final class WorldScopeScanner {
             if (found.isEmpty()) {
                 message = "No matching structure start was verified. Checked "
                         + candidates.size() + " candidate chunks. " + diagnostic;
+            } else if (placementBudgetReached && found.size() >= MAX_STRUCTURE_RESULTS) {
+                message = "Found " + found.size() + " result(s); both the display limit and placement search workload limit were reached. "
+                        + diagnostic;
             } else if (placementBudgetReached) {
                 message = "Found " + found.size() + " result(s); the placement search reached its workload limit. "
                         + diagnostic;
@@ -707,7 +715,7 @@ public final class WorldScopeScanner {
                     status = "Verifying candidate chunks; cache-negative fallback safety cap reached...";
                     checkCandidateChunks(
                             client, level, target, wantedId, dimensionId,
-                            candidates, index + 1, originX, originZ,
+                            candidates, index + 1, originX, originZ, radius,
                             found, placementBudgetReached, stats
                     );
                     return;
@@ -770,16 +778,21 @@ public final class WorldScopeScanner {
                                 for (StructureStart start : starts) {
                                     if (start == null || !start.isValid()) continue;
                                     var box = start.getBoundingBox();
-                                    if (containsStructureBounds(found, box)) {
-                                        stats.duplicateStartsIgnored++;
-                                        continue;
-                                    }
-
                                     WorldScopeResult result = new WorldScopeResult(
                                             "structure", wantedId, dimensionId,
                                             box.minX(), box.minY(), box.minZ(),
                                             box.maxX(), box.maxY(), box.maxZ()
                                     );
+                                    // A neighboring reference chunk may mention a large
+                                    // structure whose actual bounds are outside this scan.
+                                    if (distanceToResultSquared(result, originX, originZ) > (long) radius * radius) {
+                                        continue;
+                                    }
+                                    if (containsStructureBounds(found, box)) {
+                                        stats.duplicateStartsIgnored++;
+                                        continue;
+                                    }
+
                                     List<WorldScopeBox> pieces = extractPieceBounds(start);
                                     found.add(new WorldScopeHit(result, pieces, List.of()));
                                     stats.verifiedStarts++;
