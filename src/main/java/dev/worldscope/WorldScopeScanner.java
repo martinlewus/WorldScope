@@ -40,9 +40,9 @@ public final class WorldScopeScanner {
     private static final int MAX_STRUCTURE_RESULTS = 512;
     private static final int MAX_CACHE_NEGATIVE_FALLBACK_CHECKS = 512;
     private static final int MAX_PLACEMENT_REGION_TESTS = 1_000_000;
-    private static final int MAX_BIOME_SAMPLES = 2_000_000;
+    private static final int MAX_BIOME_SAMPLES = 10_000;
     private static final int MAX_BIOME_RESULTS = 512;
-    private static final int MAX_BIOME_REGION_CELLS = 524_288;
+    private static final int MAX_BIOME_REGION_CELLS = 8_192;
 
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "WorldScope-Scanner");
@@ -132,9 +132,11 @@ public final class WorldScopeScanner {
 
     private static int biomeSampleStep(int detail) {
         return switch (Math.max(1, Math.min(8, detail))) {
-            case 1 -> 16;
-            case 2 -> 12;
-            case 3, 4, 5 -> 8;
+            case 1 -> 32;
+            case 2 -> 24;
+            case 3 -> 16;
+            case 4 -> 12;
+            case 5, 6 -> 8;
             default -> 4;
         };
     }
